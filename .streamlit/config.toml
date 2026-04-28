@@ -1,0 +1,13 @@
+[theme]
+primaryColor = "#007BFF"
+backgroundColor = "#FAFAFA"
+secondaryBackgroundColor = "#E9ECEF"
+textColor = "#212529"
+font = "sans serif"
+
+[client]
+# This removes the "Made with Streamlit" and top menus for a cleaner look
+toolbarMode = "minimal"
+
+[server]
+runOnSave = true
