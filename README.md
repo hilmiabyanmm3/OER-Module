@@ -28,9 +28,13 @@ The field of OER research has shown substantial growth over the past decade, ref
 1. Clone Repository, and open the folder in local directory.
 2. Run commands in terminal
 >    python -m venv env
+
 >    call env\Scripts\activate
+
 >    python -m pip install --upgrade pip
+
 >    pip install -r requirements.txt
+
 >    streamlit run app.py
 
 
