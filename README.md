@@ -24,6 +24,14 @@ An interactive learning module featuring knowledge and practice in material simu
 ## 📃 The Background
 The field of OER research has shown substantial growth over the past decade, reflecting its significance in renewable energy systems such as water splitting, metal-air batteries, and electrochemical synthesis. This module stands out by offering a holistic and integrative learning experience that bridges established theories and emerging advancements, especially to beginner-intermediate level of QE user/researcher.
 
+## 👟 Running the Project
+>    python -m venv env
+>    call env\Scripts\activate
+>    python -m pip install --upgrade pip
+>    pip install -r requirements.txt
+>    streamlit run app.py
+
+
 
 ## 🎇Demo
 https://github.com/user-attachments/assets/85dade2f-ea5b-43fe-a9df-4fe2c7bac298
