@@ -13,6 +13,8 @@ ase
 
 # Excel
 pandas
+openpyxl
+XlsxWriter
 
 # Chemistry specific (Add these when you start coding the logic)
 # stmol        # For 3D molecule rendering in Streamlit
