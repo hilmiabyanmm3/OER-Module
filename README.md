@@ -26,10 +26,12 @@ The field of OER research has shown substantial growth over the past decade, ref
 
 ## 👟 Running the Project
 1. Clone Repository, and open the folder in local directory.
-2. Run commands in terminal
+2. You can run this project by clicking 'START_MAC.sh' for Mac users, and 'START_WIN.bat' for Windows. 
+
+Optionally, you can also run this code through terminal by these commands.
 >    python -m venv env
 
->    call env\Scripts\activate
+>    env\Scripts\activate
 
 >    python -m pip install --upgrade pip
 
