@@ -37,7 +37,7 @@ Optionally, you can also run this code through terminal by these commands.
 
 >    pip install -r requirements.txt
 
->    streamlit run app.py
+>    streamlit run Main_Menu.py
 
 
 
