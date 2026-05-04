@@ -1,21 +1,21 @@
 # utils/04_Module_3.py
 import io
 import zipfile
-import tempfile
 import re
-import os
 import numpy as np
-from ase import Atoms, Atom
-from ase.io import read, write
-from itertools import groupby
 import pandas as pd
-
-
+from itertools import groupby
+from ase import Atom
+from ase.constraints import FixAtoms
+from ase.io import read, write
+from ase.data import atomic_masses, atomic_numbers
 
 class AdsorbateGenerator:
     def __init__(self):
         self.base_atoms = None
         self.slab_fixed_indices = []
+        self.base_template = ""
+        self.base_cell_str = ""
         
         # --- Group A (y > 0.5 * lattice_y) ---
         self.offsets_A = {
@@ -24,7 +24,8 @@ class AdsorbateGenerator:
             "OH2":  [("O", -0.60,  0.00, 1.80), ("H", -1.30, -0.60, 2.00)],
             "O":    [("O", -0.80,  0.00, 1.60)],
             "OOH1": [("O", -1.03, -0.82, 1.25), ("O", -1.31, -0.09, 2.38), ("H", -2.15,  0.40, 2.08)],
-            "OOH2": [("O", -1.03,  0.82, 1.25), ("O", -1.31,  0.09, 2.38), ("H", -2.15, -0.40, 2.08)]
+            "OOH2": [("O", -1.03,  0.82, 1.25), ("O", -1.31,  0.09, 2.38), ("H", -2.15, -0.40, 2.08)],
+            "H":    [("H",  0.00,  0.00, 1.00)]
         }
 
         # --- Group B (y < 0.5 * lattice_y) ---
@@ -34,118 +35,239 @@ class AdsorbateGenerator:
             "OH2":  [("O",  0.60,  0.00, 1.80), ("H",  1.30, -0.60, 2.00)],
             "O":    [("O",  0.80,  0.00, 1.60)],
             "OOH1": [("O",  1.03, -0.84, 1.24), ("O",  1.34, -0.14, 2.37), ("H",  2.17,  0.37, 2.07)],
-            "OOH2": [("O",  1.03,  0.84, 1.24), ("O",  1.34,  0.14, 2.37), ("H",  2.17, -0.37, 2.07)]
+            "OOH2": [("O",  1.03,  0.84, 1.24), ("O",  1.34,  0.14, 2.37), ("H",  2.17, -0.37, 2.07)],
+            "H":    [("H",  0.00,  0.00, 1.00)]
         }
 
-    def load_slab(self, out_content):
-        """Extracts slab structure from PW.out content."""
+    def load_slab(self, uploaded_zip_bytes):
+        """Extracts slab structure and template from an uploaded ZIP containing PW.in and PW.out."""
         try:
-            f = io.StringIO(out_content)
-            self.base_atoms = read(f, format='espresso-out', index='-1')
-            
-            # Determine fixed indices (bottom 66%)
+            with zipfile.ZipFile(io.BytesIO(uploaded_zip_bytes), 'r') as z:
+                filenames = z.namelist()
+                out_files = [f for f in filenames if f.endswith('.out') or f.endswith('.log')]
+                in_files = [f for f in filenames if f.endswith('.in')]
+                
+                if not out_files: return False
+                
+                # Baca file .out untuk geometri final
+                out_content = z.read(out_files[0]).decode('utf-8', errors='ignore')
+                f = io.StringIO(out_content)
+                self.base_atoms = read(f, format='espresso-out', index='-1')
+                
+                # Baca file .in untuk dijadikan template
+                if in_files:
+                    in_content = z.read(in_files[0]).decode('utf-8', errors='ignore')
+                    lines = in_content.split('\n')
+                    cell_lines = []
+                    in_cell = False
+                    for line in lines:
+                        if re.match(r'(?i)^\s*CELL_PARAMETERS', line):
+                            in_cell = True
+                            cell_lines.append(line.strip())
+                            continue
+                        if in_cell:
+                            # Berhenti jika menabrak awal blok/cards baru
+                            if re.match(r'(?i)^\s*(ATOMIC_SPECIES|K_POINTS|ATOMIC_POSITIONS)', line):
+                                break
+                            if line.strip():
+                                cell_lines.append(line.strip())
+                    
+                    self.base_cell_str = "\n" + "\n".join(cell_lines) + "\n"
+                    
+                    try:
+                        atoms_in = read(io.StringIO(in_content), format='espresso-in')
+                        if atoms_in.cell:
+                            self.base_atoms.set_cell(atoms_in.get_cell())
+                            self.base_atoms.set_pbc(True)
+                    except:
+                        pass
+                    
+                    cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
+                    self.base_template = cards_pattern.split(in_content)[0].strip()
+                    self.base_template = re.sub(r"(?i)(pseudo_dir\s*=\s*)['\"].*?['\"]", r"\g<1>'~/PSEUDO'", self.base_template)
+                else:
+                    self.base_template = "&CONTROL\n   pseudo_dir = '~/PSEUDO'\n/\n&SYSTEM\n/\n"
+                    self.base_cell_str = "\n" # Kosong jika tidak ada file in
+                
+            # Tentukan indeks atom yang difiksasi (bawah 66%)
             z_coords = self.base_atoms.positions[:, 2]
             min_z, max_z = np.min(z_coords), np.max(z_coords)
             cutoff = min_z + (max_z - min_z) * 0.66
             self.slab_fixed_indices = [i for i, z in enumerate(z_coords) if z <= cutoff]
             return True
-        except Exception:
+            
+        except Exception as e:
+            print(f"Error loading ZIP: {e}")
             return False
 
     def find_top_sites(self, symbols, n_total):
-            """
-            Finds the top n_total atoms from the combined set of specified symbols.
-            Sorted by Z-coordinate (descending).
-            """
-            if not self.base_atoms:
-                return []
+        if not self.base_atoms:
+            return []
 
-            eligible_atoms = []
-            for atom in self.base_atoms:
-                if atom.symbol in symbols:
-                    eligible_atoms.append({
-                        'symbol': atom.symbol,
-                        'z_coord': atom.position[2],
-                        'index_ase': atom.index,     # 0-based index for internal ASE calls
-                        'index_qe': atom.index + 1,  # 1-based indexing for labels/QE inputs
-                        'position': atom.position
-                    })
+        eligible_atoms = []
+        for atom in self.base_atoms:
+            if atom.symbol in symbols:
+                eligible_atoms.append({
+                    'symbol': atom.symbol,
+                    'z_coord': atom.position[2],
+                    'index_ase': atom.index,     
+                    'index_qe': atom.index + 1,  
+                    'position': atom.position
+                })
 
-            # Sort all eligible atoms by Z-coordinate descending (top of the slab first)
-            sorted_atoms = sorted(eligible_atoms, key=lambda x: x['z_coord'], reverse=True)
-
-            # Return only the top n_total atoms total
-            return sorted_atoms[:n_total]
-
-    def build_adsorbates_zip(self, selected_sites):
+        sorted_atoms = sorted(eligible_atoms, key=lambda x: x['z_coord'], reverse=True)
+        return sorted_atoms[:n_total]
+    
+    def build_adsorbates_zip(self, selected_sites, reaction_package="OER", custom_variants=None):
         output_buffer = io.BytesIO()
-        variants = {
-            "1-h2o": ["H2O"],
-            "2-oh": ["OH1", "OH2"],
-            "3-o": ["O"],
-            "4-ooh": ["OOH1", "OOH2"]
-        }
         
+        pseudo_map = {
+            'Ni': 'Ni.pbe-n-rrkjus_psl.1.0.0.UPF',
+            'Mn': 'Mn.pbe-spn-rrkjus_psl.1.0.0.UPF',
+            'Fe': 'Fe.pbe-n-rrkjus_psl.1.0.0.UPF',
+            'Co': 'Co.pbe-n-rrkjus_psl.1.0.0.UPF',
+            'Cu': 'Cu.pbe-dn-rrkjus_psl.1.0.0.UPF',
+            'P':  'P.pbe-n-rrkjus_psl.1.0.0.UPF',
+            'O':  'O.pbe-n-rrkjus_psl.1.0.0.UPF',
+            'H':  'H.pbe-rrkjus_psl.1.0.0.UPF',
+            'S':  'S.pbe-n-rrkjus_psl.1.0.0.UPF'
+        }
+
+        # Tentukan variant berdasarkan package yang dipilih
+        if reaction_package == "OER":
+            variants = {"1-h2o": ["H2O"], "2-oh": ["OH1", "OH2"], "3-o": ["O"], "4-ooh": ["OOH1", "OOH2"]}
+        elif reaction_package == "HER":
+            variants = {"1-h": ["H"]}
+        elif reaction_package == "Custom" and custom_variants is not None:
+            variants = custom_variants
+        else:
+            variants = {"1-ads": ["O"]} 
+
         lattice_y = self.base_atoms.cell.lengths()[1]
+        metals_list = ['Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt', 'Ag', 'Au', 'Ru', 'Rh', 'Ir', 'Os', 'V', 'Cr', 'Ti', 'Sc', 'Zn']
         
         with zipfile.ZipFile(output_buffer, 'w') as zf:
             for site in selected_sites:
                 ref_pos = self.base_atoms[site['index_ase']].position
                 site_name = f"{site['symbol']}-{site['index_qe']}"
                 
-                # Select offsets based on Y-coordinate grouping
                 active_offsets = self.offsets_A if ref_pos[1] > 0.5 * lattice_y else self.offsets_B
                 
                 for folder, ads_list in variants.items():
                     for ads_type in ads_list:
-                        # Clone base and add adsorbate atoms
                         new_atoms = self.base_atoms.copy()
-                        for elem, dx, dy, dz in active_offsets[ads_type]:
-                            new_pos = [ref_pos[0] + dx, ref_pos[1] + dy, ref_pos[2] + dz]
-                            new_atoms.append(Atom(elem, position=new_pos))
                         
-                        # Generate VASP/QE content
+                        if ads_type in active_offsets:
+                            for elem, dx, dy, dz in active_offsets[ads_type]:
+                                new_pos = [ref_pos[0] + dx, ref_pos[1] + dy, ref_pos[2] + dz]
+                                new_atoms.append(Atom(elem, position=new_pos))
+                        else:
+                            print(f"Warning: Offset for '{ads_type}' not found!")
+                            continue 
+                        
+                        if self.slab_fixed_indices:
+                            c = FixAtoms(indices=self.slab_fixed_indices)
+                            new_atoms.set_constraint(c)
+                        
+                        # --- 1. BERSIHKAN TEMPLATE ---
+                        unique_elements = list(set(new_atoms.get_chemical_symbols()))
+                        ntyp_new = len(unique_elements)
+                        
+                        cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
+                        template_clean = cards_pattern.split(self.base_template)[0].strip()
+                        
+                        # Hapus starting_magnetization lama
+                        template_clean = re.sub(r'(?i)starting_magnetization\(\d+\)\s*=\s*[\d\.\-]+[\n\r]*', '', template_clean)
+                        
+                        # Update nat dan ntyp
+                        template_clean = re.sub(r'(?i)(nat\s*=\s*)\d+', r'\g<1>' + str(len(new_atoms)), template_clean)
+                        template_clean = re.sub(r'(?i)(ntyp\s*=\s*)\d+', r'\g<1>' + str(ntyp_new), template_clean)
+                        
+                        # --- 2. BANGUN ATOMIC_SPECIES & MAGNETIZATION ---
+                        new_species_str = "\n\nATOMIC_SPECIES\n"
+                        mag_str = ""
+                        
+                        for i, el in enumerate(unique_elements, 1):
+                            mass = atomic_masses[atomic_numbers[el]]
+                            pseudo = pseudo_map.get(el, f"{el}.UPF")
+                            new_species_str += f"  {el}  {mass:.3f}  {pseudo}\n"
+                            
+                            mag_val = 1.0 if el in metals_list else 0.0
+                            mag_str += f"   starting_magnetization({i}) = {mag_val}\n"
+
+                        system_match = re.search(r'(?i)(&SYSTEM.*?)(/)', template_clean, flags=re.DOTALL)
+                        if system_match:
+                            new_system = system_match.group(1) + mag_str + system_match.group(2)
+                            template_clean = template_clean.replace(system_match.group(0), new_system)
+                        
+                        # Tambahkan dipole correction
+                        if 'dipfield' not in template_clean.lower():
+                            template_clean = re.sub(r'(?i)(&CONTROL)', r'\1\n   dipfield = .true.\n   tefield = .true.', template_clean, count=1)
+                        if 'edir' not in template_clean.lower():
+                            template_clean = re.sub(r'(?i)(&SYSTEM)', r'\1\n edir = 3\n   emaxpos = 0.75\n   eamp = 0.001', template_clean, count=1)
+                        
+                        # --- 3. BANGUN BLOK KOORDINAT & GABUNGKAN ---
+                        pos_str = "\nATOMIC_POSITIONS angstrom\n"
+                        for i, atom in enumerate(new_atoms):
+                            fix_flag = "0 0 0" if i in self.slab_fixed_indices else ""
+                            pos_str += f"{atom.symbol}  {atom.position[0]:.10f} {atom.position[1]:.10f} {atom.position[2]:.10f}  {fix_flag}\n"
+                        
+                        # Tambahkan K_POINTS (Gamma point by default untuk adsorbat)
+                        kpoints_str = "\nK_POINTS gamma\n"
+                        
+                        # GABUNGKAN SEMUA DENGAN CELL DARI PW.IN ASLI
+                        final_in = template_clean + new_species_str + kpoints_str + self.base_cell_str + pos_str
+                        
                         v_buf = io.StringIO()
-                        write(v_buf, new_atoms, format='vasp')
-                        
+                        write(v_buf, new_atoms, format='vasp') 
                         path = f"{folder}/{site_name}/{ads_type}" if len(ads_list) > 1 else f"{folder}/{site_name}"
                         zf.writestr(f"{path}/input.vasp", v_buf.getvalue())
-                        zf.writestr(f"{path}/PW.in", f"! Adsorbate {ads_type} on {site_name}\n" + v_buf.getvalue())
+                        zf.writestr(f"{path}/PW.in", final_in)
         
         output_buffer.seek(0)
         return output_buffer.getvalue()
     
-
-
 class AdsorbateAnalyzer:
     """Logic for Step 2: Analyzing OER Adsorbate Results"""
     def __init__(self):
-        self.step_order = {"slab": 0, "1-h2o": 1, "2-oh": 2, "3-o": 3, "4-ooh": 4}
+        # Definisikan urutan agar tabel rapi dari slab -> ooh
+        self.step_order = {
+            "slab": 0, "surface": 0,
+            "1-h2o": 1, "2-oh": 2, "3-o": 3, "4-ooh": 4
+        }
         self.site_pattern = r"([A-Z][a-z]?-\d+)"
 
     def _parse_path_info(self, path: str):
+        """
+        Extracts Step, Site, and Termination (Atas/Bawah) from file path.
+        """
         lower_path = path.lower()
         parts = path.split('/')
         
-        # 1. Determine Step
+        # 1. Tentukan Step (Reaksi)
         step = "unknown"
-        for key in self.step_order.keys():
-            if key in lower_path:
-                step = key
-                break
+        if "slab" in lower_path or "surface" in lower_path: 
+            step = "slab"
+        else:
+            for key in ["1-h2o", "2-oh", "3-o", "4-ooh"]:
+                if key in lower_path: 
+                    step = key
+                    break
         
-        # 2. Determine Termination
-        term = "atas" if "atas" in lower_path else "bawah" if "bawah" in lower_path else "unknown"
+        # 2. Tentukan Terminasi (Atas/Bawah)
+        termination = "unknown"
+        if "/atas/" in lower_path: termination = "atas"
+        elif "/bawah/" in lower_path: termination = "bawah"
 
-        # 3. Determine Site (e.g., Ni-1)
+        # 3. Tentukan Site (Contoh: Fe-54)
         site = None
         for part in reversed(parts):
             match = re.search(self.site_pattern, part)
-            if match:
+            if match: 
                 site = match.group(1)
                 break
         
-        return step, site, term
+        return step, site, termination
 
     def process_zip(self, zip_bytes):
         adsorbates_data = []
@@ -155,60 +277,77 @@ class AdsorbateAnalyzer:
             out_files = [f for f in z.namelist() if f.endswith((".out", ".log")) and not "__MACOSX" in f]
             
             for path in out_files:
-                content = z.read(path).decode("utf-8", errors='ignore')
+                try:
+                    content = z.read(path).decode("utf-8", errors='ignore')
+                except: continue
                 
-                # Extract Energy (Ry)
+                # Ekstrak Total Energy (Ry)
                 match = re.search(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content)
                 if not match: continue
                 
                 energy_ry = float(match.group(1))
                 step, site, term = self._parse_path_info(path)
                 
-                # Use ASE to extract final structure strings for download
-                f_buf = io.StringIO(content)
-                try:
-                    atoms = read(f_buf, format='espresso-out', index='-1')
-                    v_buf = io.StringIO()
-                    write(v_buf, atoms, format='vasp')
-                    vasp_str = v_buf.getvalue()
-                except:
-                    vasp_str = ""
-
                 record = {
-                    "Path": path, "Energy (Ry)": energy_ry,
-                    "Step": step, "Step_Order": self.step_order.get(step, 99),
-                    "Site": site, "Termination": term, "vasp": vasp_str
+                    "Path": path, 
+                    "Energy (Ry)": energy_ry,
+                    "Step": step, 
+                    "Step_Order": self.step_order.get(step, 99),
+                    "Site": site, 
+                    "Termination": term
                 }
 
+                # Simpan slab di dictionary tersendiri berdasarkan terminasi (atas/bawah)
                 if step == "slab": slabs_map[term] = record
                 else: adsorbates_data.append(record)
 
         if not adsorbates_data: return pd.DataFrame()
 
-        # Grouping by Site to make the report readable
-        adsorbates_data.sort(key=lambda x: (x['Site'] or "", x['Step_Order']))
+        # --- PENGELOMPOKKAN (GROUPING) ---
         final_rows = []
-        
+        adsorbates_data = [x for x in adsorbates_data if x['Site']]
+        adsorbates_data.sort(key=lambda x: x['Site'])
+
         for site_name, group in groupby(adsorbates_data, key=lambda x: x['Site']):
             group_list = list(group)
             term = group_list[0]['Termination']
             
-            # Add the reference slab for this site first
+            # 1. Masukkan baris referensi Slab untuk terminasi site ini
             if term in slabs_map:
                 s_rec = slabs_map[term].copy()
                 s_rec['Site'] = site_name
                 final_rows.append(s_rec)
             
+            # 2. Masukkan data adsorbat yang sudah diurutkan (H2O -> OOH)
+            group_list.sort(key=lambda x: x['Step_Order'])
             final_rows.extend(group_list)
-            # Add a spacer for Excel readability
-            final_rows.append({"Path": "", "Step": "", "Site": "", "Energy (Ry)": None})
+            
+            # 3. Baris pemisah (Spacer baris kosong)
+            final_rows.append({"Path": None, "Step": None, "Site": None, "Energy (Ry)": None})
             
         return pd.DataFrame(final_rows)
 
     def generate_excel(self, df):
         output = io.BytesIO()
-        cols = ['Step', 'Site', 'Energy (Ry)', 'Path']
-        df_exp = df[[c for c in cols if c in df.columns]].fillna("")
+        
+        # Susun urutan kolom agar sesuai dengan adsorbate_energies.xlsx
+        target_cols = ['Path', 'Step', 'Site', 'Energy (Ry)']
+        cols = [c for c in target_cols if c in df.columns]
+        df_exp = df[cols]
+
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_exp.to_excel(writer, index=False, sheet_name='OER_Energies')
+            # Ubah nama Sheet menjadi 'Final Energies'
+            df_exp.to_excel(writer, index=False, sheet_name='Final Energies')
+            
+            # Formatting lebar kolom
+            ws = writer.sheets['Final Energies']
+            fmt = writer.book.add_format({'num_format': '0.000000'})
+            
+            for i, col in enumerate(df_exp.columns):
+                # Cari lebar teks maksimum di kolom, atau gunakan panjang header
+                max_len = df_exp[col].astype(str).map(len).max() if not df_exp[col].empty else len(col)
+                max_len = max(max_len, len(col))
+                width = min(max_len + 2, 60)
+                ws.set_column(i, i, width, fmt if col == 'Energy (Ry)' else None)
+
         return output.getvalue()
