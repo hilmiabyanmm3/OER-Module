@@ -6,7 +6,7 @@ left, mid, right = st.columns([1, 4, 1])
 
 with mid:
     # --- 2. HEADER ---
-    module_header("PRE", "Pre-requisite", "Essential tools and libraries for OER modeling")
+    module_header("PRE", "Pre-requisite", "Essential tools and resources for OER modeling")
 
     main_content_text("""
         To ensure a smooth transition from theory to computation, please verify that your 
@@ -22,9 +22,11 @@ with mid:
     """)
     st.link_button("Access Materials Project", "https://next-gen.materialsproject.org/materials")
     
+    # Updated Research-Focused Tip
     highlight_box("""
-        <b>Tip:</b> Make sure to register for an account to obtain your <b>API Key</b>, 
-         which allows you to download structures directly via Python.
+        <b>Tip:</b> Always record the unique <b>Material ID (mp-id)</b> of your bulk structure. 
+        This 'fingerprint' ensures your research is reproducible and allows you to 
+        quickly cross-reference thermodynamic properties later.
     """, type="info")
 
     # --- 4. VISUALIZATION (VESTA) ---
@@ -36,32 +38,24 @@ with mid:
     """)
     st.link_button("Download VESTA", "https://www.jp-minerals.org/vesta/en/download.html")
 
-    # --- 5. PYTHON LIBRARIES ---
-    sub_section_header("3. Python Libraries", emoji="🐍")
+    # --- 5. DOWNLOAD INPUT FILES ---
+    sub_section_header("3. Download Input Files", emoji="📁")
     main_content_text("""
-        Ensure you have a working Python environment (3.9+) with the following 
-        libraries installed:
+        Download the specific input templates, pseudo-potentials, and reference data 
+        required for the <b>NiFePO</b> OER simulation modules.
     """)
     
-    st.code("""
-# Install the core libraries via terminal
-pip install ase matplotlib
-    """, language="bash")
-
-    st.markdown("""
-    * **ASE (Atomic Simulation Environment):** For structural manipulation and DFT interfacing.
-    * **Matplotlib:** For generating publication-quality energy profiles and graphs.
-    """)
+    st.link_button("Download Input Files", "https://drive.google.com/drive/folders/1YgqMfzjpEIW3pUAWATGuSstM95r9pO8r?usp=sharing")
 
     # --- 6. READINESS CHECK ---
     st.divider()
     sub_section_header("Readiness Check", emoji="✅")
     
-    ready = st.checkbox("I have installed the libraries and downloaded VESTA.")
+    ready = st.checkbox("I have setup my Pre-requisite and downloaded the necessary files.")
     
     if ready:
-        st.success("Environment setup complete! You are ready to begin.")
-        if st.button("Proceed to Module 1: Downloading Bulk ➡️", use_container_width=True):
+        st.success("Pre-requsite setup complete! You are ready to begin.")
+        if st.button("Proceed to Module 1: Bulk Setup ➡️", use_container_width=True):
             st.switch_page("pages/02_Module_1.py")
     else:
-        st.warning("Please finalize your environment setup before proceeding.")
+        st.warning("Please finalize your pre-requisite before proceeding.")

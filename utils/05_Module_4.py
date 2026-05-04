@@ -13,67 +13,71 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import math
 
+import io
+import re
+from ase.io import read
+import numpy as np
+
 class ZPEManager:
-    """Logic for Module 4: Finite Displacements & Job Scripts"""
-    
-    def generate_finite_displacements(self, lines, n_atoms, displacement=0.01):
-        """Generates 6 displacement files (+/- x,y,z) for each of the last n_atoms."""
-        start_idx = -1
-        for i, line in enumerate(lines):
-            if "ATOMIC_POSITIONS" in line.upper():
-                start_idx = i + 1
-                break
-        
-        if start_idx == -1: return None
+    def __init__(self):
+        self.delta = 0.01  # Displacement in Angstrom
 
-        atom_lines_indices = []
-        for i in range(start_idx, len(lines)):
-            stripped = lines[i].strip()
-            if stripped and not stripped.startswith(('/', '#', '!')):
-                atom_lines_indices.append(i)
-            elif stripped.startswith('/'):
-                break
+    def generate_finite_displacements(self, out_content, template_content, n_to_displace):
+        try:
+            # 1. Parse final structure from .out
+            f_out = io.StringIO(out_content)
+            atoms = read(f_out, format='espresso-out', index='-1')
+            total_atoms = len(atoms)
 
-        if not atom_lines_indices: return None
+            # 2. Adjust 'nat' in the template using Regex
+            # Finds 'nat = some_number' (case insensitive) and replaces with actual count
+            template_adjusted = re.sub(
+                r'(nat\s*=\s*)\d+', 
+                f'\\1{total_atoms}', 
+                template_content, 
+                flags=re.IGNORECASE
+            )
 
-        target_indices = atom_lines_indices[-n_atoms:]
-        output_files = {}
-        directions = [('x', 0), ('y', 1), ('z', 2)]
-        signs = [('plus', 1), ('minus', -1)]
+            # 3. Clean template: Remove existing ATOMIC_POSITIONS block
+            template_clean = re.split(r'ATOMIC_POSITIONS', template_adjusted, flags=re.IGNORECASE)[0]
+            template_clean = template_clean.strip()
 
-        for atom_rank, line_idx in enumerate(target_indices):
-            atom_id = atom_rank + 1 
-            for axis_name, axis_idx in directions:
-                for sign_name, sign_val in signs:
-                    new_lines = list(lines)
-                    parts = new_lines[line_idx].split()
-                    if len(parts) < 4: continue
-                    
-                    element = parts[0]
-                    coords = [float(parts[1]), float(parts[2]), float(parts[3])]
-                    coords[axis_idx] += (displacement * sign_val)
-                    
-                    new_lines[line_idx] = f"{element:<4} {coords[0]:12.8f} {coords[1]:12.8f} {coords[2]:12.8f}\n"
-                    filename = f"atom{atom_id}_{axis_name}_{sign_name}.in"
-                    output_files[filename] = "".join(new_lines)
-                
-        return output_files
+            # 4. Define displacement directions with new naming suffixes
+            # p = plus, m = minus
+            directions = [
+                ('x', 0, 1, 'p'), ('x', 0, -1, 'm'),
+                ('y', 1, 1, 'p'), ('y', 1, -1, 'm'),
+                ('z', 2, 1, 'p'), ('z', 2, -1, 'm')
+            ]
 
-    def generate_job_scripts(self, filenames, bash_header):
-        """Creates .sh scripts for QE execution based on filenames."""
-        job_scripts = {}
-        for fin in filenames:
-            if not fin.endswith('.in'): continue
-                
-            base_name = fin.rsplit('.', 1)[0]
-            fout = f"{base_name}.out"
-            sh_filename = f"{base_name}.sh"
-            
-            script_content = f"{bash_header.strip()}\n\n"
-            script_content += f"pw.x -in {fin} > {fout}\n"
-            job_scripts[sh_filename] = script_content
-            
-        return job_scripts
+            target_indices = range(total_atoms - n_to_displace, total_atoms)
+            results = {}
+
+            for idx in target_indices:
+                # Use 1-based index for naming (QE convention)
+                qe_idx = idx + 1 
+                original_pos = atoms[idx].position.copy()
+
+                for axis, axis_idx, sign, suffix in directions:
+                    # Create displaced atoms object
+                    displaced_atoms = atoms.copy()
+                    move = np.zeros(3)
+                    move[axis_idx] = self.delta * sign
+                    displaced_atoms[idx].position += move
+
+                    # Format the ATOMIC_POSITIONS block
+                    pos_block = "\n\nATOMIC_POSITIONS {angstrom}\n"
+                    for atom in displaced_atoms:
+                        pos_block += f"{atom.symbol:4} {atom.position[0]:12.8f} {atom.position[1]:12.8f} {atom.position[2]:12.8f}\n"
+
+                    # 5. New Filename Format: PWINPUT_atm[index]_[axis][suffix]
+                    filename = f"PWINPUT_atm{qe_idx}_{axis}{suffix}.in"
+                    results[filename] = template_clean + pos_block
+
+            return results
+        except Exception as e:
+            print(f"Error: {e}")
+            return None
 
 
 class ZPEAnalyzer:

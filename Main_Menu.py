@@ -71,8 +71,8 @@ with mid:
     st.divider()
     highlight_box("Ready to transform your understanding of atomic surface science?", type="success")
     
-    if st.button("Start Research Path: Module 1 ➡️", use_container_width=True):
-        st.switch_page("pages/01_Module_1.py")
+    if st.button("Start Pre-requisite ➡️", use_container_width=True):
+        st.switch_page("pages/01_Pre-requisite.py")
 
 # 4. SIDEBAR PROGRESS
 st.sidebar.header("Overall Progress")

@@ -52,24 +52,30 @@ class AdsorbateGenerator:
         except Exception:
             return False
 
-    def find_top_sites(self, target_elements, z_tolerance=1.5):
-        if self.base_atoms is None: return []
-        
-        sites = []
-        z_coords = [a.position[2] for a in self.base_atoms if a.symbol in target_elements]
-        if not z_coords: return []
-        
-        max_z = max(z_coords)
-        for i, atom in enumerate(self.base_atoms):
-            if atom.symbol in target_elements and abs(max_z - atom.position[2]) <= z_tolerance:
-                sites.append({
-                    "index_ase": i,
-                    "index_qe": i + 1,
-                    "symbol": atom.symbol,
-                    "y_coord": atom.position[1],
-                    "z_coord": atom.position[2]
-                })
-        return sorted(sites, key=lambda x: x["z_coord"], reverse=True)
+    def find_top_sites(self, symbols, n_total):
+            """
+            Finds the top n_total atoms from the combined set of specified symbols.
+            Sorted by Z-coordinate (descending).
+            """
+            if not self.base_atoms:
+                return []
+
+            eligible_atoms = []
+            for atom in self.base_atoms:
+                if atom.symbol in symbols:
+                    eligible_atoms.append({
+                        'symbol': atom.symbol,
+                        'z_coord': atom.position[2],
+                        'index_ase': atom.index,     # 0-based index for internal ASE calls
+                        'index_qe': atom.index + 1,  # 1-based indexing for labels/QE inputs
+                        'position': atom.position
+                    })
+
+            # Sort all eligible atoms by Z-coordinate descending (top of the slab first)
+            sorted_atoms = sorted(eligible_atoms, key=lambda x: x['z_coord'], reverse=True)
+
+            # Return only the top n_total atoms total
+            return sorted_atoms[:n_total]
 
     def build_adsorbates_zip(self, selected_sites):
         output_buffer = io.BytesIO()

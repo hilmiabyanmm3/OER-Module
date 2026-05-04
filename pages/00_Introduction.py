@@ -88,5 +88,5 @@ with mid:
     """, unsafe_allow_html=True)
 
     # --- 9. NAVIGATION ---
-    if st.button("Proceed to Module 1: Downloading Bulk ➡️", use_container_width=True):
-        st.switch_page("pages/01_Module_1.py")
+    if st.button("Proceed to Pre-requisite ➡️", use_container_width=True):
+        st.switch_page("pages/01_Pre-requisite.py")

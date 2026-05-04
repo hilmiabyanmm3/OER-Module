@@ -7,9 +7,9 @@ import plotly.express as px
 module_logic = importlib.import_module("utils.06_Module_5")
 Analyzer = module_logic.BottleneckAnalyzer()
 
-st.set_page_config(page_title="Module 5: Bottleneck Analysis", layout="wide")
+st.set_page_config(page_title="Module 5: Gibbs Free Energy Graph", layout="wide")
 
-st.title("06 | Module 5: Bottleneck Intelligence")
+st.title("06 | Module 5: Gibbs Free Energy Graph")
 
 # Check if we have data from Module 4
 if 'gibbs_plot_data' not in st.session_state:
@@ -52,6 +52,6 @@ else:
 
 # --- FOOTER ---
 st.divider()
-if st.button("Finalize Project & Generate Full Report 🏁"):
+if st.button("Finalize Project 🏁"):
     st.balloons()
     st.success("OER Pipeline Processed from A to B!")
