@@ -24,14 +24,16 @@ tab1, tab2 = st.tabs(["Step 1: Slab Loading & Site Selection", "Step 2: Adsorbat
 
 with tab1:
     st.subheader("Structure Setup")
-    st.info("Upload your relaxed slab output file to identify active metal sites.")
+    st.info("Upload a ZIP file containing your relaxed slab files (PW.in and PW.out)")
 
-    uploaded_out = st.file_uploader("Upload Relaxed Slab Output (.out)", type=["out", "log"], key="slab_uploader")
+    uploaded_slab_zip = st.file_uploader("Upload Relaxed Slab ZIP (.zip)", type=["zip"], key="slab_uploader")
 
-    if uploaded_out:
-        content = uploaded_out.getvalue().decode('utf-8', errors='ignore')
+    if uploaded_slab_zip:
+        # Teruskan raw bytes (tidak di-decode utf-8) ke backend
+        zip_bytes = uploaded_slab_zip.getvalue()
         
-        if st.session_state.ads_gen.load_slab(content):
+        # Panggil fungsi load_slab dengan zip_bytes
+        if st.session_state.ads_gen.load_slab(zip_bytes):
             st.success(f"Slab Loaded: {st.session_state.ads_gen.base_atoms.get_chemical_formula()}")
             
             # --- UPDATED SITE FINDING FORM ---
@@ -42,12 +44,11 @@ with tab1:
                 with col_m:
                     metals = st.multiselect(
                         "Active Elements to Include:", 
-                        ["Ni", "Fe", "Co", "Mn"], 
+                        ["Ni", "Fe", "Co", "Mn", "Cu", "O"], 
                         default=["Ni", "Fe"]
                     )
                 
                 with col_n:
-                    # Clarified: n is the sum total of all selected metals
                     n_total = st.number_input(
                         "Total Top Atoms (Sum):", 
                         min_value=1, 
@@ -56,13 +57,12 @@ with tab1:
                     )
 
                 if st.form_submit_button("Find Top Sites", type="primary"):
-                    # Logic now handles n_total as the combined limit
                     st.session_state.found_sites = st.session_state.ads_gen.find_top_sites(metals, n_total)
 
     # Render Site Selection results
     if st.session_state.get('found_sites'):
         st.divider()
-        st.write(f"### Select Active Sites (Top {len(st.session_state.found_sites)} Metal Atoms Identified)")
+        st.write(f"### Select Active Sites")
         selected_sites = []
         
         for site in st.session_state.found_sites:
@@ -70,14 +70,40 @@ with tab1:
             if st.checkbox(label, value=True, key=f"site_{site['index_qe']}"):
                 selected_sites.append(site)
         
+        st.write("### Reaction Package Configuration")
+        package_choice = st.selectbox("Select Reaction:", ["OER (*H2O, *OH, *O, *OOH)", "HER (*H)", "Custom"])
+        
+        custom_dict = None
+        if package_choice == "Custom":
+            st.info("Define your custom variants. Format: FolderName: Adsorbate1, Adsorbate2. \nExample: `CO2RR: CO2, CO, HCOOH`")
+            custom_input = st.text_area("Custom Variants Mapping:")
+            if custom_input:
+                try:
+                    custom_dict = {}
+                    lines = custom_input.strip().split('\n')
+                    for line in lines:
+                        if ':' in line:
+                            folder, ads_str = line.split(':')
+                            custom_dict[folder.strip()] = [x.strip() for x in ads_str.split(',')]
+                except Exception as e:
+                    st.error("Invalid custom format. Please follow the example.")
+        
         if st.button("Generate Adsorbate Structures", type="primary"):
             if selected_sites:
+                # Ambil nama package asli (OER, HER, atau Custom) tanpa teks dalam kurung
+                pkg_name = package_choice.split(" ")[0] 
+                
                 with st.spinner("Generating intermediate coordinates..."):
-                    zip_data = st.session_state.ads_gen.build_adsorbates_zip(selected_sites)
+                    # Panggil fungsi backend yang telah di-update
+                    zip_data = st.session_state.ads_gen.build_adsorbates_zip(
+                        selected_sites, 
+                        reaction_package=pkg_name, 
+                        custom_variants=custom_dict
+                    )
                     st.download_button(
-                        label="⬇️ Download OER_Adsorbates.zip",
+                        label=f"⬇️ Download {pkg_name}_Adsorbates.zip",
                         data=zip_data,
-                        file_name="OER_Adsorbates.zip",
+                        file_name=f"{pkg_name}_Adsorbates.zip",
                         mime="application/zip"
                     )
             else:
@@ -99,9 +125,9 @@ with tab2:
                 
                 if not df_results.empty:
                     st.success(f"Successfully processed structures.")
-                    df_display = df_results[df_results['Path'] != ""]
+                    df_display = df_results[df_results['Path'].notna()]
                     st.dataframe(
-                        df_display[['Step', 'Site', 'Energy (Ry)', 'Termination']].style.format({"Energy (Ry)": "{:.6f}"}), 
+                        df_display[['Step', 'Site', 'Energy (Ry)']].style.format({"Energy (Ry)": "{:.6f}"}), 
                         use_container_width=True
                     )
                     
