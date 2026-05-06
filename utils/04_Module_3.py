@@ -5,10 +5,12 @@ import re
 import numpy as np
 import pandas as pd
 from itertools import groupby
+import ase
 from ase import Atom
 from ase.constraints import FixAtoms
 from ase.io import read, write
 from ase.data import atomic_masses, atomic_numbers
+
 
 class AdsorbateGenerator:
     def __init__(self):

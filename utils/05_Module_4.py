@@ -18,32 +18,43 @@ import re
 from ase.io import read
 import numpy as np
 
+import io
+import re
+import zipfile
+from ase.io import read
+import numpy as np
+
 class ZPEManager:
     def __init__(self):
-        self.delta = 0.01  # Displacement in Angstrom
+        self.delta = 0.01
+        # Mapping adsorbate types to number of atoms to displace
+        self.ads_map = {
+            "ooh": 3,
+            "h2o": 3,
+            "oh": 2,
+            "o": 1
+        }
+
+    def detect_n_from_path(self, path):
+        """Detects how many atoms to displace based on folder/file keywords."""
+        lower_path = path.lower()
+        # Order matters: check 'ooh' before 'oh' and 'o'
+        for key in ["ooh", "h2o", "oh", "o"]:
+            if key in lower_path:
+                return self.ads_map[key]
+        return 0 # Default if no match found
 
     def generate_finite_displacements(self, out_content, template_content, n_to_displace):
+        """Core logic to generate 6 displaced files for the top n atoms."""
         try:
-            # 1. Parse final structure from .out
             f_out = io.StringIO(out_content)
             atoms = read(f_out, format='espresso-out', index='-1')
             total_atoms = len(atoms)
 
-            # 2. Adjust 'nat' in the template using Regex
-            # Finds 'nat = some_number' (case insensitive) and replaces with actual count
-            template_adjusted = re.sub(
-                r'(nat\s*=\s*)\d+', 
-                f'\\1{total_atoms}', 
-                template_content, 
-                flags=re.IGNORECASE
-            )
+            # Update 'nat'
+            template_adjusted = re.sub(r'(nat\s*=\s*)\d+', f'\\1{total_atoms}', template_content, flags=re.IGNORECASE)
+            template_clean = re.split(r'ATOMIC_POSITIONS', template_adjusted, flags=re.IGNORECASE)[0].strip()
 
-            # 3. Clean template: Remove existing ATOMIC_POSITIONS block
-            template_clean = re.split(r'ATOMIC_POSITIONS', template_adjusted, flags=re.IGNORECASE)[0]
-            template_clean = template_clean.strip()
-
-            # 4. Define displacement directions with new naming suffixes
-            # p = plus, m = minus
             directions = [
                 ('x', 0, 1, 'p'), ('x', 0, -1, 'm'),
                 ('y', 1, 1, 'p'), ('y', 1, -1, 'm'),
@@ -51,34 +62,49 @@ class ZPEManager:
             ]
 
             target_indices = range(total_atoms - n_to_displace, total_atoms)
-            results = {}
+            file_results = {}
 
             for idx in target_indices:
-                # Use 1-based index for naming (QE convention)
-                qe_idx = idx + 1 
-                original_pos = atoms[idx].position.copy()
-
+                qe_idx = idx + 1
                 for axis, axis_idx, sign, suffix in directions:
-                    # Create displaced atoms object
                     displaced_atoms = atoms.copy()
-                    move = np.zeros(3)
-                    move[axis_idx] = self.delta * sign
-                    displaced_atoms[idx].position += move
+                    displaced_atoms[idx].position[axis_idx] += self.delta * sign
 
-                    # Format the ATOMIC_POSITIONS block
                     pos_block = "\n\nATOMIC_POSITIONS {angstrom}\n"
                     for atom in displaced_atoms:
                         pos_block += f"{atom.symbol:4} {atom.position[0]:12.8f} {atom.position[1]:12.8f} {atom.position[2]:12.8f}\n"
 
-                    # 5. New Filename Format: PWINPUT_atm[index]_[axis][suffix]
                     filename = f"PWINPUT_atm{qe_idx}_{axis}{suffix}.in"
-                    results[filename] = template_clean + pos_block
-
-            return results
-        except Exception as e:
-            print(f"Error: {e}")
+                    file_results[filename] = template_clean + pos_block
+            return file_results
+        except:
             return None
 
+    def process_batch_zip(self, input_zip_bytes, template_content):
+        """Handles the batch ZIP-in/ZIP-out logic."""
+        output_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(io.BytesIO(input_zip_bytes), 'r') as in_zip:
+            with zipfile.ZipFile(output_buffer, 'w') as out_zip:
+                # Find all .out files
+                out_files = [f for f in in_zip.namelist() if f.endswith(('.out', '.log')) and not '__MACOSX' in f]
+                
+                for path in out_files:
+                    n = self.detect_n_from_path(path)
+                    if n == 0: continue # Skip files that don't match adsorbate keywords
+                    
+                    content = in_zip.read(path).decode('utf-8', errors='ignore')
+                    # Generate the 6*n files
+                    displaced_files = self.generate_finite_displacements(content, template_content, n)
+                    
+                    if displaced_files:
+                        # We use the original path folder name to keep things organized
+                        folder_prefix = "/".join(path.split("/")[:-1])
+                        for fname, ftext in displaced_files.items():
+                            out_zip.writestr(f"{folder_prefix}/{fname}", ftext)
+        
+        output_buffer.seek(0)
+        return output_buffer.getvalue()
 
 class ZPEAnalyzer:
     """Logic for Step 2: Extracting Forces and Computing ZPE"""
@@ -172,83 +198,3 @@ class ZPEAnalyzer:
                 except: continue
         return pd.DataFrame(zpe_data)
     
-
-
-class GibbsAnalyzer:
-    """Logic for Step 3: Gibbs Free Energy & Overpotential Analysis"""
-    def __init__(self):
-        self.ry_to_ev = 13.605698066
-        self.colors = ["orange","green","blue","red","purple","salmon","pink","cyan","lime"] * 3
-        self.markers = ["s"]*12 + ["^"]*12 + ["o"]*12
-
-    def calculate_deltas(self, df_e, df_z, G_H2O, G_H2, U):
-        # Clean dataframes
-        df_e = df_e[df_e['Path'].notna() & (df_e['Path'] != "")].copy()
-        df_z = df_z[df_z['Path'].notna() & (df_z['Path'] != "")].copy()
-
-        # Merge Energy and ZPE
-        merged = pd.merge(df_e, df_z[['Step', 'Site', 'ZPE (eV)']], on=['Step', 'Site'], how='left')
-        merged['ZPE (eV)'] = merged['ZPE (eV)'].fillna(0.0)
-        merged['E (eV)'] = merged['Energy (Ry)'] * self.ry_to_ev
-
-        results = []
-        G_O2 = 4.92 + 2 * G_H2O - 2 * G_H2
-        G_PE = 0.5 * G_H2 
-
-        for site, group in merged.groupby(['Site']):
-            def get_val(step_name, col):
-                val = group[group['Step'] == step_name][col].values
-                return val[0] if len(val) > 0 else None
-
-            E = [get_val('slab', 'E (eV)'), get_val('1-h2o', 'E (eV)'), 
-                 get_val('2-oh', 'E (eV)'), get_val('3-o', 'E (eV)'), get_val('4-ooh', 'E (eV)')]
-            Z = [0.0, get_val('1-h2o', 'ZPE (eV)'), get_val('2-oh', 'ZPE (eV)'), 
-                 get_val('3-o', 'ZPE (eV)'), get_val('4-ooh', 'ZPE (eV)')]
-            
-            if None in E: continue
-
-            # OER 5-Step Logic
-            dg = []
-            dg.append(E[1] + Z[1] - (G_H2O + E[0])) # Step 1
-            dg.append(E[2] + Z[2] + (G_PE - U) - (E[1] + Z[1])) # Step 2
-            dg.append(E[3] + Z[3] + (G_PE - U) - (E[2] + Z[2])) # Step 3
-            dg.append(E[4] + Z[4] + (G_PE - U) - G_H2O - (E[3] + Z[3])) # Step 4
-            dg.append(E[0] + G_O2 + (G_PE - U) - (E[4] + Z[4])) # Step 5
-
-            max_step = max(dg[1:])
-            overpotential = max_step - 1.23
-            
-            # Generate Profile Data
-            levels = [0.0]
-            for val in dg: levels.append(levels[-1] + val)
-            x_plot, y_plot = [], []
-            for i, l in enumerate(levels):
-                x_plot.extend([2*i, 2*i+1])
-                y_plot.extend([l, l])
-
-            results.append({
-                "label": site, "deltaG": dg, "overpotential": overpotential,
-                "dataX": x_plot, "dataY": y_plot
-            })
-        return results
-
-    def create_plot(self, plot_data, title, U_shift=0.0):
-        plt.rcParams['font.size'] = 14
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        for i, data in enumerate(plot_data):
-            c = self.colors[i % len(self.colors)]
-            x, y_orig = data['dataX'], data['dataY']
-            
-            # Apply U_shift to the Y coordinates
-            y = [val - (U_shift * (j // 2)) if j > 1 else val for j, val in enumerate(y_orig)]
-            
-            ax.plot(x, y, color=c, linewidth=3, label=data['label'])
-            # Dotted connecting lines
-            for j in range(len(x)//2 - 1):
-                ax.plot([x[2*j+1], x[2*j+2]], [y[2*j+1], y[2*j+2]], color=c, linestyle='--', alpha=0.5)
-
-        ax.set_ylabel("Gibbs Free Energy (eV)")
-        ax.set_title(title)
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        return fig
