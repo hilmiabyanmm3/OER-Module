@@ -1,28 +1,14 @@
 # utils/05_Module_4.py
 import io
 import zipfile
-import copy
 import numpy as np
 import pandas as pd
 import re
 import os
-from itertools import groupby
 from ase import Atoms
+from ase.io import read
 from ase.units import Ry, Bohr, _hbar, _e, _amu
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import math
-
-import io
-import re
-from ase.io import read
-import numpy as np
-
-import io
-import re
-import zipfile
-from ase.io import read
-import numpy as np
+from itertools import groupby
 
 class ZPEManager:
     def __init__(self):
@@ -186,15 +172,74 @@ class ZPEAnalyzer:
         zpe_data = []
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
             calc_folders = {os.path.dirname(f) for f in z.namelist() if "atom" in f or "LOG_atm" in f}
+            
             for folder in calc_folders:
+                # ... (kode parsing step dan perhitungan ZPE tetap sama seperti sebelumnya) ...
                 step, site, term = self._parse_path_info(folder)
-                if step == "unknown": continue
+                if step == "unknown" or step not in self.species_params: 
+                    continue
+
+                species_len = len(self.species_params[step]["symbols"])
+                n_slab = 0
+                geom_path = f"{folder}/GEOM.xyz" if folder else "GEOM.xyz"
+                try:
+                    content = z.read(geom_path).decode('utf-8')
+                    total_atoms = int(content.strip().split('\n')[0].strip())
+                    n_slab = total_atoms - species_len
+                except Exception:
+                    n_slab = 156 
                 
-                # species_key logic (e.g. 1-h2o)
-                idx_move = [1, 2, 3] # Simplified for OHH; in real use, map to n_slab + i
+                idx_move = [n_slab + i for i in range(1, species_len + 1)]
+                
                 try:
                     zpe_val = self.compute_zpe(z, folder, step, idx_move)
-                    zpe_data.append({"Path": folder, "Step": step, "Site": site, "ZPE (eV)": zpe_val})
-                except: continue
-        return pd.DataFrame(zpe_data)
+                    zpe_data.append({"Path": folder, "Step": step, "Step_Order": self.step_order.get(step, 99),"Site": site, "ZPE (eV)": zpe_val})
+                except Exception as e:
+                    print(f"Failed processing ZPE at {folder}: {e}")
+                    continue
+                    
+        # --- LOGIKA PENGELOMPOKKAN (GROUPING) ---
+        if not zpe_data: return pd.DataFrame()
+        
+        # Buang data yang tidak punya site (None/kosong)
+        zpe_data = [x for x in zpe_data if x['Site']]
+        
+        # Urutkan berdasarkan Site terlebih dahulu, lalu Step_Order agar 1-h2o sampai 4-ooh berurutan
+        zpe_data.sort(key=lambda x: (x['Site'], x['Step_Order']))
+
+        final_rows = []
+        # Group berdasarkan Site
+        for site_name, group in groupby(zpe_data, key=lambda x: x['Site']):
+            group_list = list(group)
+            
+            # Masukkan seluruh data dalam satu site tersebut
+            final_rows.extend(group_list)
+            
+            # Tambahkan baris kosong (spacer) sebagai pemisah di Excel
+            final_rows.append({"Path": None, "Step": None, "Site": None, "ZPE (eV)": None})
+            
+        return pd.DataFrame(final_rows)
+    
+    def generate_excel(self, df: pd.DataFrame):
+        output = io.BytesIO()
+        target = ['Path', 'Step', 'Site', 'ZPE (eV)']
+        cols = [c for c in target if c in df.columns]
+        df_exp = df[cols].fillna("")
+
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_exp.to_excel(writer, index=False, sheet_name='ZPE Summary')
+            ws = writer.sheets['ZPE Summary']
+            
+            fmt = writer.book.add_format({'num_format': '0.000'})
+            
+            for i, col in enumerate(df_exp.columns):
+                max_len = len(str(col))
+                if not df_exp[col].empty:
+                    s_len = df_exp[col].astype(str).map(len)
+                    if not s_len.empty: max_len = max(max_len, s_len.max())
+                width = min(max_len + 2, 60)
+                ws.set_column(i, i, width, fmt if col == 'ZPE (eV)' else None)
+                
+        output.seek(0)
+        return output
     

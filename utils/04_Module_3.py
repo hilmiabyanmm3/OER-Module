@@ -283,11 +283,17 @@ class AdsorbateAnalyzer:
                     content = z.read(path).decode("utf-8", errors='ignore')
                 except: continue
                 
-                # Ekstrak Total Energy (Ry)
-                match = re.search(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content)
-                if not match: continue
+                # Ekstrak Final energy
+                match_final = re.search(r'(?i)Final\s+energy\s*=\s*([-.\d]+)\s*Ry', content)
                 
-                energy_ry = float(match.group(1))
+                if match_final:
+                    energy_ry = float(match_final.group(1))
+                else:
+                    matches_total = re.findall(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content, re.IGNORECASE)
+                    if matches_total:
+                        energy_ry = float(matches_total[-1])
+                    else: continue
+                
                 step, site, term = self._parse_path_info(path)
                 
                 record = {
@@ -347,7 +353,8 @@ class AdsorbateAnalyzer:
             
             for i, col in enumerate(df_exp.columns):
                 # Cari lebar teks maksimum di kolom, atau gunakan panjang header
-                max_len = df_exp[col].astype(str).map(len).max() if not df_exp[col].empty else len(col)
+                lengths = df_exp[col].dropna().astype(str).map(len)
+                max_len = lengths.max() if not lengths.empty else len(col)
                 max_len = max(max_len, len(col))
                 width = min(max_len + 2, 60)
                 ws.set_column(i, i, width, fmt if col == 'Energy (Ry)' else None)

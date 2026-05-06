@@ -82,7 +82,7 @@ with tab2:
                 
                 if not df_zpe.empty:
                     st.success(f"Calculated ZPE for {len(df_zpe)} structures.")
-                    st.dataframe(df_zpe[['Step', 'Site', 'ZPE (eV)']].style.format({"ZPE (eV)": "{:.4f}"}), 
+                    st.dataframe(df_zpe[['Step', 'Site', 'ZPE (eV)']].style.format({"ZPE (eV)": "{:.3f}"}), 
                                   use_container_width=True)
                     
                     excel_data = st.session_state.zpe_analyzer.generate_excel(df_zpe)
