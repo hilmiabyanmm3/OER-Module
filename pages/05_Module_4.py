@@ -36,15 +36,15 @@ module_header("04", "Vibrational Analysis", "Adsorbate vibration and Zero-Point 
 tab1, tab2 = st.tabs(["Step 1: Displacement Generator", "Step 2: Frequency Extraction"])
 
 with tab1:
-    st.subheader("Batch Displacement Generator")
-    st.info("Upload a ZIP containing relaxed OER outputs. The system will automatically detect the adsorbate type (O, OH, H2O, OOH) and generate 6 displacements per adsorbate atom.")
+    st.subheader("Displacement Generator")
+    st.write("Upload a ZIP containing relaxed OER outputs. The system will automatically detect the adsorbate type (H2O, OH, O, or OOH) and generate 6 displacements per adsorbate atom.")
 
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
             uploaded_zip = st.file_uploader("Upload Adsorbate Results ZIP", type=["zip"], key="batch_zpe_zip")
         with c2:
-            uploaded_template = st.file_uploader("Upload QE Template (.in)", type=["in"], key="batch_template")
+            uploaded_template = st.file_uploader("Upload QE Template", type=["in", "txt"], key="batch_template")
 
         if uploaded_zip and uploaded_template:
             if st.button("Generate Batch Displacements", type="primary", use_container_width=True):
@@ -68,7 +68,7 @@ with tab1:
 
 with tab2:
     st.subheader("Step 2: ZPE Data Extractor")
-    st.info("Extract forces from your displacement calculations to solve the vibrational Hessian.")
+    st.write("Extract forces from your displacement calculations to obtain the vibrational frequencies and zero-point energies. ")
 
     uploaded_zpe_zip = st.file_uploader("Upload Completed ZPE ZIP (containing .out logs)", type="zip", key="zpe_results")
     
@@ -82,8 +82,8 @@ with tab2:
                 
                 if not df_zpe.empty:
                     st.success(f"Calculated ZPE for {len(df_zpe)} structures.")
-                    st.dataframe(df_zpe[['Step', 'Site', 'ZPE (eV)']].style.format({"ZPE (eV)": "{:.3f}"}), 
-                                  use_container_width=True)
+                    df_display = df_zpe.dropna(subset=['Site'])
+                    st.dataframe(df_display[['Step', 'Site', 'ZPE (eV)']].style.format({"ZPE (eV)": "{:.3f}"}), use_container_width=True)
                     
                     excel_data = st.session_state.zpe_analyzer.generate_excel(df_zpe)
                     # Updated: Professional Excel Download Label
