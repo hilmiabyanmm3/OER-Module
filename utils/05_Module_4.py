@@ -5,32 +5,40 @@ import pandas as pd
 from ase import Atoms
 from ase.io import read
 from ase.data import atomic_masses, atomic_numbers
-from ase.units import Ry, Bohr, _hbar, _e, _amu
+from ase.units import Ry, Bohr, _hbar, _e, _amu, _c, _hplanck
 from itertools import groupby
 
 class ZPEManager:
     def __init__(self):
         self.delta = 0.01
-        self.ads_map = {"ooh": 3, "h2o": 3, "oh": 2, "o": 1}
+        self.ads_map = {"ooh": 3, "h2o": 3, "oh": 2, "o": 1, "h": 1, "surface": 0, "slab": 0}
         self.metals = {'Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt', 'Ag', 'Au', 'Ru', 'Rh', 'Ir', 'Os', 'V', 'Cr', 'Ti', 'Sc', 'Zn'}
 
     def detect_n_from_path(self, path):
-        # Gunakan generator untuk mencari n dengan cepat dalam 1 baris
-        return next((self.ads_map[k] for k in ["ooh", "h2o", "oh", "o"] if k in path.lower()), 0)
+        path_lower = path.lower()
+        if "surface" in path_lower or "slab" in path_lower:
+            return 0
+        return next((self.ads_map[k] for k in ["ooh", "h2o", "oh", "o", "h"] if k in path_lower), 0)
 
-    def generate_finite_displacements(self, out_content, in_content, n_displace):
+    # Menambahkan parameter lokal dan global (tmpl_content)
+    def generate_finite_displacements(self, out_content, local_in_content, tmpl_content, n_displace):
         try:
+            # ase.io.read dengan index='-1' otomatis mengambil final atomic geometry
             atoms = read(io.StringIO(out_content), format='espresso-out', index='-1')
             elements = list(set(atoms.get_chemical_symbols()))
 
-            # 1. Ekstrak K_POINTS & CELL_PARAMETERS pakai Regex Lookahead (berhenti di blok huruf kapital berikutnya)
-            cell = re.search(r'(?i)(CELL_PARAMETERS.*?)(?=\n[A-Z_]+|$)', in_content, re.S)
-            kp = re.search(r'(?i)(K_POINTS.*?)(?=\n[A-Z_]+|$)', in_content, re.S)
+            # 1. CELL_PARAMETERS dibaca dari PW.in lokal (jika tidak ada, fallback ke template)
+            source_cell = local_in_content if local_in_content else tmpl_content
+            cell = re.search(r'(?i)(CELL_PARAMETERS.*?)(?=\n[A-Z_]+|$)', source_cell, re.S)
             cell_str = f"\n{cell.group(1).strip()}\n" if cell else "\n"
+
+            # 2. K_POINTS dibaca dari template-zpe.in global
+            kp = re.search(r'(?i)(K_POINTS.*?)(?=\n[A-Z_]+|$)', tmpl_content, re.S)
             kp_str = f"\n{kp.group(1).strip()}\n" if kp else "\nK_POINTS gamma\n"
 
-            # 2. Bersihkan template dasar & update Control/System params
-            base = re.split(r'(?i)ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS', in_content)[0].strip()
+            # 3. Base (&CONTROL, &SYSTEM, dll) dibaca murni dari template-zpe.in global
+            base = re.split(r'(?i)ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS', tmpl_content)[0].strip()
+            
             updates = [
                 (r"(?i)(pseudo_dir\s*=\s*)['\"].*?['\"]", r"\g<1>'~/PSEUDO'"),
                 (r'(?i)(nat\s*=\s*)\d+', rf'\g<1>{len(atoms)}'),
@@ -40,16 +48,11 @@ class ZPEManager:
             for p, r in updates: 
                 base = re.sub(p, r, base)
 
-            # 3. Bangun ATOMIC_SPECIES & Magnetization via loop 1 baris (List Comprehension)
             p_map = {
-                'Ni': 'Ni.pbe-n-rrkjus_psl.1.0.0.UPF',
-                'Mn': 'Mn.pbe-spn-rrkjus_psl.1.0.0.UPF',
-                'Fe': 'Fe.pbe-n-rrkjus_psl.1.0.0.UPF',
-                'Co': 'Co.pbe-n-rrkjus_psl.1.0.0.UPF',
-                'Cu': 'Cu.pbe-dn-rrkjus_psl.1.0.0.UPF',
-                'P':  'P.pbe-n-rrkjus_psl.1.0.0.UPF',
-                'O':  'O.pbe-n-rrkjus_psl.1.0.0.UPF',
-                'H':  'H.pbe-rrkjus_psl.1.0.0.UPF',
+                'Ni': 'Ni.pbe-n-rrkjus_psl.1.0.0.UPF', 'Mn': 'Mn.pbe-spn-rrkjus_psl.1.0.0.UPF',
+                'Fe': 'Fe.pbe-n-rrkjus_psl.1.0.0.UPF', 'Co': 'Co.pbe-n-rrkjus_psl.1.0.0.UPF',
+                'Cu': 'Cu.pbe-dn-rrkjus_psl.1.0.0.UPF', 'P':  'P.pbe-n-rrkjus_psl.1.0.0.UPF',
+                'O':  'O.pbe-n-rrkjus_psl.1.0.0.UPF', 'H':  'H.pbe-rrkjus_psl.1.0.0.UPF',
                 'S':  'S.pbe-n-rrkjus_psl.1.0.0.UPF'
             }
 
@@ -60,13 +63,14 @@ class ZPEManager:
             mag_str = "".join(f"   starting_magnetization({i}) = {1.0 if el in self.metals else 0.0}\n" 
                               for i, el in enumerate(elements, 1))
             
-            # Sisipkan magnetisasi ke blok &SYSTEM
             base = re.sub(r'(?i)(&SYSTEM.*?)(/)', rf'\1{mag_str}\2', base, flags=re.S)
             header = base + species_str + kp_str + cell_str
 
-            # 4. Generate Output Posisi Displaced
-            dirs = [('x', 0, 1, 'p'), ('x', 0, -1, 'm'), ('y', 1, 1, 'p'), ('y', 1, -1, 'm'), ('z', 2, 1, 'p'), ('z', 2, -1, 'm')]
             res = {}
+            xyz_str = f"{len(atoms)}\n\n" + "".join(f"{a.symbol} {a.position[0]:.6f} {a.position[1]:.6f} {a.position[2]:.6f}\n" for a in atoms)
+            res["GEOM.xyz"] = xyz_str
+
+            dirs = [('x', 0, 1, 'p'), ('x', 0, -1, 'm'), ('y', 1, 1, 'p'), ('y', 1, -1, 'm'), ('z', 2, 1, 'p'), ('z', 2, -1, 'm')]
             for idx in range(len(atoms) - n_displace, len(atoms)):
                 for ax, ax_idx, sign, suf in dirs:
                     datoms = atoms.copy()
@@ -88,19 +92,20 @@ class ZPEManager:
                 
                 folder = os.path.dirname(path)
                 out_c = zin.read(path).decode('utf-8', 'ignore')
-                in_path = f"{folder}/PW.in"
-                in_c = zin.read(in_path).decode('utf-8', 'ignore') if in_path in zin.namelist() else tmpl_content
                 
-                # Gunakan Walrus Operator (:=) untuk eksekusi dan cek hasil sekaligus
-                if in_c and (dfiles := self.generate_finite_displacements(out_c, in_c, n)):
+                in_path = f"{folder}/PW.in"
+                # Baca PW.in lokal hanya jika ada, jika tidak, jadikan string kosong
+                local_in_c = zin.read(in_path).decode('utf-8', 'ignore') if in_path in zin.namelist() else ""
+                
+                # Pastikan tmpl_content (dari UI Streamlit) tersedia sebelum eksekusi
+                if tmpl_content and (dfiles := self.generate_finite_displacements(out_c, local_in_c, tmpl_content, n)):
                     for fname, ftext in dfiles.items(): 
                         zout.writestr(f"{folder}/{fname}", ftext)
         return out_buf.getvalue()
 
 class ZPEAnalyzer:
-    """Logic for Step 2: Extracting Forces and Computing ZPE"""
+    """Logic for Step 2: Extracting Forces, Computing ZPE, and Generating Detail/Jmol files"""
     def __init__(self):
-        # Define chemical species and their masses for OER intermediates
         raw_species = {"1-h2o": {"symbols": "OHH"}, "2-oh": {"symbols": "OH"}, "3-o": {"symbols": "O"}, "4-ooh": {"symbols": "OOH"}, "h": {"symbols": "H"}}
         self.species_params = {k: {"symbols": v["symbols"], "masses": Atoms(v["symbols"]).get_masses().tolist()} for k, v in raw_species.items()}
         self.step_order = {"1-h2o": 1, "2-oh": 2, "3-o": 3, "4-ooh": 4}
@@ -118,7 +123,6 @@ class ZPEAnalyzer:
         return step, site, term
 
     def _read_forces(self, zf, filepath, idx_move):
-        """Extracts QE force vectors for specific atom indices."""
         forces = np.zeros((len(idx_move), 3))
         with zf.open(filepath) as f:
             lines = f.read().decode('utf-8', errors='ignore').splitlines()
@@ -136,24 +140,60 @@ class ZPEAnalyzer:
                         except StopIteration: break
         return forces
 
+    # --- [NEW] HELPER UNTUK JMOL & DETAIL TEXT ---
+    def _get_mode(self, modes, n, indices, atoms):
+        m = atoms.get_masses()
+        im = np.repeat(m[indices]**-0.5, 3)
+        mode = np.zeros((len(atoms), 3))
+        mode[indices] = (modes[n] * im).reshape((-1, 3))
+        return mode
+
+    def _write_jmol_to_str(self, atoms, frequencies, indices, modes):
+        out = io.StringIO()
+        symbols = atoms.get_chemical_symbols()
+        f = frequencies.copy()
+        for n in range(3 * len(indices)):
+            out.write('%6d\n' % len(atoms))
+            if getattr(f[n], 'imag', 0) != 0 and f[n].imag != 0:
+                c = 'i'
+                fn_val = f[n].imag
+            else:
+                c = ' '
+                fn_val = f[n].real
+            out.write('Mode #%d, f = %.1f%s cm^-1.\n' % (n, fn_val, c))
+            mode = self._get_mode(modes, n, indices, atoms)
+            for i, pos in enumerate(atoms.positions):
+                out.write('%2s %12.5f %12.5f %12.5f %12.5f %12.5f %12.5f \n' %
+                          (symbols[i], pos[0], pos[1], pos[2], mode[i, 0], mode[i, 1], mode[i, 2]))
+        return out.getvalue()
+
+    def _create_detail_str(self, species, idx_move, hnu, zpe):
+        s_conv = 0.01 * _e / _c / _hplanck
+        out = io.StringIO()
+        out.write(f"Species: {species}\nIDX_MOVE: {idx_move}\n\n")
+        out.write("  #    meV     cm^-1\n")
+        out.write("---------------------\n")
+        for n, e in enumerate(hnu):
+            c = "i" if e.imag != 0 else " "
+            val = e.imag if e.imag != 0 else e.real
+            out.write('%3d %6.1f%s  %7.1f%s\n' % (n, 1000 * val, c, s_conv * val, c))
+        out.write('---------------------\n')
+        out.write(f'Zero-point energy: {zpe:.3f} eV\n')
+        return out.getvalue()
+
     def compute_zpe(self, zf, folder_path, species_key, idx_move, delta=0.01):
-        """Constructs Hessian and solves for vibrational frequencies."""
         m = np.array(self.species_params[species_key]["masses"])
         n = 3 * len(idx_move)
         H = np.empty((n, n))
         r = 0
         for a in idx_move:
             for i in 'xyz':
-                # Map naming convention to log files generated in Step 1
-                f_m = f"{folder_path}/atom{a-idx_move[0]+1}_{i}_minus.out" # Adjust mapping to your naming
+                f_m = f"{folder_path}/atom{a-idx_move[0]+1}_{i}_minus.out" 
                 f_p = f"{folder_path}/atom{a-idx_move[0]+1}_{i}_plus.out"
-                
-                # Fallback to standard LOG_atm naming if needed
                 try: 
                     fm_forces = self._read_forces(zf, f_m, idx_move)
                     fp_forces = self._read_forces(zf, f_p, idx_move)
                 except:
-                    # Alternative naming fallback
                     f_m = f"{folder_path}/LOG_atm{a}_{i}m"; f_p = f"{folder_path}/LOG_atm{a}_{i}p"
                     fm_forces = self._read_forces(zf, f_m, idx_move); fp_forces = self._read_forces(zf, f_p, idx_move)
 
@@ -162,18 +202,25 @@ class ZPEAnalyzer:
 
         H += H.T
         im = np.repeat(m**-0.5, 3)
-        omega2, _ = np.linalg.eigh(im[:, None] * H * im)
+        
+        # [MODIFIED] Ekstrak modes (eigenvectors) dan transpose
+        omega2, modes = np.linalg.eigh(im[:, None] * H * im)
+        modes = modes.T.copy()
+        
         s = _hbar * 1e10 / np.sqrt(_e * _amu)
         hnu = s * omega2.astype(complex)**0.5
-        return 0.5 * hnu.real.sum()
+        zpe = 0.5 * hnu.real.sum()
+        
+        return zpe, hnu, modes
 
     def process_zip(self, zip_bytes):
         zpe_data = []
-        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+        out_files_buffer = io.BytesIO() # Buffer untuk menampung file Jmol dan TXT
+        
+        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z, zipfile.ZipFile(out_files_buffer, "w") as zout:
             calc_folders = {os.path.dirname(f) for f in z.namelist() if "atom" in f or "LOG_atm" in f}
             
             for folder in calc_folders:
-                # ... (kode parsing step dan perhitungan ZPE tetap sama seperti sebelumnya) ...
                 step, site, term = self._parse_path_info(folder)
                 if step == "unknown" or step not in self.species_params: 
                     continue
@@ -182,28 +229,54 @@ class ZPEAnalyzer:
                 n_slab = 0
                 geom_path = f"{folder}/GEOM.xyz" if folder else "GEOM.xyz"
                 
+                atoms = None
                 try:
                     content = z.read(geom_path).decode('utf-8')
-                    total_atoms = int(content.strip().split('\n')[0].strip())
+                    lines = content.strip().splitlines()
+                    
+                    total_atoms = int(lines[0].strip())
                     n_slab = total_atoms - species_len
-                except Exception:
-                    n_slab = 156 
+                    
+                    symbols = []
+                    positions = []
+                    
+                    for line in lines[2:]: 
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            symbols.append(parts[0])
+                            positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                    
+                    atoms = Atoms(symbols=symbols, positions=positions)
+                    
+                except Exception as e:
+                    print(f"Peringatan: GEOM.xyz gagal diproses di {folder} -> {e}")
+                    n_slab = 156
                 
                 idx_move = [n_slab + i for i in range(1, species_len + 1)]
                 
                 try:
-                    zpe_val = self.compute_zpe(z, folder, step, idx_move)
+                    zpe_val, hnu, modes = self.compute_zpe(z, folder, step, idx_move)
                     zpe_data.append({"Path": folder, "Step": step, "Step_Order": self.step_order.get(step, 99),"Site": site, "ZPE (eV)": zpe_val})
+                    
+                    # Cek apakah folder berada di root. Jika ya, hindari tambahan "/"
+                    detail_path = f"{folder}/ZPE_detail.txt" if folder else "ZPE_detail.txt"
+                    jmol_path = f"{folder}/vib_modes.xyz" if folder else "vib_modes.xyz"
+                    # 1. Buat dan masukkan ZPE_detail.txt
+                    detail_text = self._create_detail_str(step, idx_move, hnu, zpe_val)
+                    zout.writestr(detail_path, detail_text)
+                    # 2. Buat dan masukkan vib_modes.xyz
+                    if atoms is not None:
+                        ase_indices = np.array(idx_move) - 1
+                        jmol_text = self._write_jmol_to_str(atoms, 1000 * hnu.copy(), ase_indices, modes)
+                        zout.writestr(jmol_path, jmol_text)
+                        
                 except Exception as e:
                     print(f"Failed processing ZPE at {folder}: {e}")
                     continue
                     
-        # --- LOGIKA PENGELOMPOKKAN (GROUPING) ---
-        if not zpe_data: return pd.DataFrame()
+        if not zpe_data: return pd.DataFrame(), None
         
-        zpe_data = [x for x in zpe_data if x['Site']] # Buang data yang tidak punya site (None/kosong)
-        
-        # Urutkan berdasarkan Site terlebih dahulu, lalu Step_Order agar 1-h2o sampai 4-ooh berurutan
+        zpe_data = [x for x in zpe_data if x['Site']] 
         zpe_data.sort(key=lambda x: (x['Site'], x['Step_Order']))
 
         final_rows = []
@@ -212,7 +285,7 @@ class ZPEAnalyzer:
             final_rows.extend(group_list)
             final_rows.append({"Path": None, "Step": None, "Site": None, "ZPE (eV)": None})
             
-        return pd.DataFrame(final_rows)
+        return pd.DataFrame(final_rows), out_files_buffer.getvalue()
     
     def generate_excel(self, df: pd.DataFrame):
         output = io.BytesIO()
@@ -235,4 +308,3 @@ class ZPEAnalyzer:
                 
         output.seek(0)
         return output
-    

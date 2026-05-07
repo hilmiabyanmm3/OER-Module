@@ -54,12 +54,12 @@ with tab1:
                     final_zip = ZPE.process_batch_zip(uploaded_zip.getvalue(), template_text)
                     
                     if final_zip:
-                        st.success("Batch generation complete!")
+                        st.success("Vibration input file generation complete!")
                         # Updated: Professional Download Label
                         st.download_button(
                             label="Download All Displaced Inputs (ZIP) ↓",
                             data=final_zip,
-                            file_name="batch_zpe_inputs.zip",
+                            file_name="vibration_inputs.zip",
                             mime="application/zip",
                             use_container_width=True
                         )
@@ -67,7 +67,7 @@ with tab1:
                         st.error("No valid OER .out files found in the ZIP.")
 
 with tab2:
-    st.subheader("Step 2: ZPE Data Extractor")
+    st.subheader("Vibrational Data Extractor")
     st.write("Extract forces from your displacement calculations to obtain the vibrational frequencies and zero-point energies. ")
 
     uploaded_zpe_zip = st.file_uploader("Upload Completed ZPE ZIP (containing .out logs)", type="zip", key="zpe_results")
@@ -78,7 +78,7 @@ with tab2:
 
         if st.button("Calculate ZPE & Frequencies", type="primary", use_container_width=True):
             with st.spinner("Solving Hessian and extracting Zero-Point Energies..."):
-                df_zpe = st.session_state.zpe_analyzer.process_zip(uploaded_zpe_zip.getvalue())
+                df_zpe, zip_details = st.session_state.zpe_analyzer.process_zip(uploaded_zpe_zip.getvalue())
                 
                 if not df_zpe.empty:
                     st.success(f"Calculated ZPE for {len(df_zpe)} structures.")
@@ -86,12 +86,23 @@ with tab2:
                     st.dataframe(df_display[['Step', 'Site', 'ZPE (eV)']].style.format({"ZPE (eV)": "{:.3f}"}), use_container_width=True)
                     
                     excel_data = st.session_state.zpe_analyzer.generate_excel(df_zpe)
-                    # Updated: Professional Excel Download Label
-                    st.download_button(
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    col1.download_button(
                         label="Download ZPE Results (Excel) ↓", 
                         data=excel_data, 
                         file_name="ZPE_Results.xlsx",
-                        use_container_width=True
+                        use_container_width=True,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                    col2.download_button(
+                        label="Download ZPE Details (.zip) ↓",
+                        data=zip_details,
+                        file_name="ZPE_Detail_Modes.zip",
+                        use_container_width=True,
+                        mime="application/zip"
                     )
                 else:
                     st.error("Extraction failed. Ensure folder structure/filenames are correct.")
