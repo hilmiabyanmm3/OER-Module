@@ -6,7 +6,7 @@ import matplotlib as mpl
 
 class BottleneckAnalyzer:
     def __init__(self):
-        self.step_names = ["H2O -> *OH", "*OH -> *O", "*O -> *OOH", "*OOH -> O2"]
+        self.step_names = ["*H2O -> *OH", "*OH -> *O", "*O -> *OOH", "*OOH -> O2"]
 
     def identify_bottlenecks(self, plot_data):
         analysis_results = []
@@ -96,7 +96,9 @@ class GibbsAnalyzer:
     def create_plot(self, plot_data, title, U_shift=0.0):
         plt.rcParams['font.family'] = 'DejaVu Sans'
         plt.rcParams['axes.linewidth'] = 2
-        fig = plt.figure(figsize=(9, 6))
+        plt.rcParams['font.size']      = 15
+
+        fig = plt.figure(figsize=(8, 5))
         ax = fig.add_axes([0.1, 0.1, 0.75, 0.8])
 
         all_shifted_y = []
@@ -112,9 +114,10 @@ class GibbsAnalyzer:
             data['temp_y'] = y_plot
             all_shifted_y.extend(y_plot)
 
-        ax.set_ylabel('Gibbs Free Energy (eV)', fontsize=16)
-        ax.set_xlabel('Reaction Coordinate', fontsize=16)
+        ax.set_ylabel('Gibbs Free Energy (eV)')
+        ax.set_xlabel('Reaction Coordinate')
         ax.set_xticks([])
+        ax.tick_params(axis='y', direction='in', length=8, width=2, pad=10)
         
         if all_shifted_y:
             ax.set_ylim(min(all_shifted_y) - 0.5, max(all_shifted_y) + 1.2)
@@ -138,6 +141,6 @@ class GibbsAnalyzer:
                 ax.plot([x[2*j], x[2*j+1]], [y[2*j], y[2*j+1]], color=c, linewidth=4, label=line_label)
                 ax.plot(x[2*j]+0.5, y[2*j], marker=m, color=c, markeredgecolor='black', markersize=8)
 
-        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False, fontsize=12)
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False)
         ax.set_title(title, loc='left', fontsize=18, pad=20)
         return fig

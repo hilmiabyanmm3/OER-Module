@@ -100,7 +100,7 @@ with tab2:
                     col2.download_button(
                         label="Download ZPE Details (.zip) ↓",
                         data=zip_details,
-                        file_name="ZPE_Detail_Modes.zip",
+                        file_name="ZPE_Detail.zip",
                         use_container_width=True,
                         mime="application/zip"
                     )

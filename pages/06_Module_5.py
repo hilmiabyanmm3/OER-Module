@@ -14,7 +14,7 @@ from utils.ui_components import (
 
 # --- 1. GLOBAL STYLING & CONFIG ---
 st.set_page_config(
-    page_title="Module 5: Gibbs Free Energy Graph", 
+    page_title="Module 5: Free Energy Diagram", 
     layout="wide"
 )
 inject_global_css()
@@ -28,23 +28,23 @@ except Exception as e:
     st.error(f"Logic Module Error: {e}")
 
 # --- 3. NAVIGATION HEADER ---
-module_header("05", "Gibbs Free Energy Graph", "Visualizing data from previous calculations")
+module_header("05", "Gibbs Free Energy Diagram", "Visualizing data from previous calculations")
 
 # Define Tabs
-tab1, tab2, tab3 = st.tabs(["Step 1: Gibbs Analysis", "Step 2: Gibbs Graph", "Step 3: PDS"])
+tab1, tab2, tab3 = st.tabs(["Step 1: Gibbs Analysis", "Step 2: Gibbs Data", "Step 3: PDS"])
 
 # --- TAB 1: CALCULATION & INTERACTIVE PLOT ---
 with tab1:
-    st.subheader("Step 1: Gibbs Free Energy Profile")
-    st.info("Combine DFT Energies and ZPE to visualize the OER reaction coordinate.")
+    st.subheader("Gibbs Free Energy Profile")
+    st.write("Combine DFT Energies and ZPE to visualize the free energy profile.")
 
     # Initialize Gibbs engine (The upgraded version)
     if 'gibbs_engine' not in st.session_state:
         st.session_state.gibbs_engine = module_logic.GibbsAnalyzer()
 
     c1, c2 = st.columns(2)
-    file_e = c1.file_uploader("Upload Energy Summary (Module 4)", type=['xlsx', 'csv'])
-    file_z = c2.file_uploader("Upload ZPE Summary (Step 1)", type=['xlsx', 'csv'])
+    file_e = c1.file_uploader("Upload Energy Summary (Module 3)", type=['xlsx', 'csv'])
+    file_z = c2.file_uploader("Upload ZPE Summary (Module 4)", type=['xlsx', 'csv'])
 
     if file_e and file_z:
         st.divider()
@@ -88,14 +88,11 @@ with tab1:
 
 # --- TAB 2: HEATMAP & SUMMARY ---
 with tab2:
-    st.subheader("Step 2: Gibbs Graph")
     if 'm4_plot_data' not in st.session_state:
         # Updated: Removed warning emoji
         st.warning("Please complete the Gibbs Analysis in Step 1 first.")
     else:
-        # Implementation of the Reference Summary Table with Highlight
-        st.write("#### Site Summary & Potential Determining Steps")
-        
+        st.subheader("Site Summary & Potential Determining Steps")
         table_data = []
         for data in st.session_state.m4_plot_data:
             table_data.append({
@@ -128,7 +125,6 @@ with tab2:
 
 # --- TAB 3: INSIGHTS ---
 with tab3:
-    st.subheader("Step 3: PDS")
     if 'm4_plot_data' not in st.session_state:
         # Updated: Removed warning emoji
         st.warning("Please complete the Gibbs Analysis in Step 1 first.")
