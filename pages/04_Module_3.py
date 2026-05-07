@@ -138,7 +138,15 @@ with tab2:
         for col, (mol, val) in zip(cols, mol_configs)
     }
 
-    uploaded_results = st.file_uploader("Upload Results ZIP", type="zip", key="results_uploader")
+    st.divider()
+    st.write("##### System Information & Data Upload")
+    col_cat, col_upload = st.columns([1, 2]) # Rasio lebar 1 : 2
+    
+    with col_cat:
+        catalyst_name = st.text_input("Catalyst Name", value="NiFePO", help="This will be used as identifier.")
+        
+    with col_upload:
+        uploaded_results = st.file_uploader("Upload Results ZIP (.out files)", type="zip", key="results_uploader")
 
     if uploaded_results and st.button("Extract & Calculate Energies", type="primary", use_container_width=True):
         with st.spinner("Analyzing structural paths and calculating energies..."):
@@ -166,7 +174,7 @@ with tab2:
             # --- DOWNLOAD BUTTONS ---
             dl1, dl2 = st.columns(2)
             dl1.download_button("Download Final Energies ↓", st.session_state.ads_analyzer.generate_excel(df_results), "Final_Energies.xlsx", use_container_width=True)
-            dl2.download_button("Download Adsorption Energies ↓", st.session_state.ads_analyzer.generate_adsorption_excel(df_ads, isolated_energies), "Adsorption_Energies.xlsx", use_container_width=True)
+            dl2.download_button("Download Adsorption Energies ↓", st.session_state.ads_analyzer.generate_adsorption_excel(df_ads, isolated_energies, catalyst_name), "Adsorption_Energies.xlsx", use_container_width=True)
 
 # --- 5. FOOTER NAVIGATION ---
 st.divider()

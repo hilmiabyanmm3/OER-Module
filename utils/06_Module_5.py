@@ -3,6 +3,7 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import io
 
 class BottleneckAnalyzer:
     def __init__(self):
@@ -92,6 +93,51 @@ class GibbsAnalyzer:
                 "dataX": dataX, "dataY": dataY
             })
         return results
+    
+    def generate_excel_summary(self, plot_data, catalyst_name="Unknown"):
+        output = io.BytesIO()
+        # 1. Menyiapkan data dalam bentuk list of dictionary
+        rows = []
+        for data in plot_data:
+            rows.append({
+                'Catalyst': catalyst_name,
+                'Site': data['label'],
+                'ΔG1 (*H2O)': data['deltaG'][0],
+                'ΔG2 (*OH)': data['deltaG'][1],
+                'ΔG3 (*O)': data['deltaG'][2],
+                'ΔG4 (*OOH)': data['deltaG'][3],
+                'ΔG5 (*+O2)': data['deltaG'][4],
+                'Overpotential (V)': data['overpotential']
+            })
+            
+        df_summary = pd.DataFrame(rows)
+        # 2. Menulis ke Excel dengan xlsxwriter
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_summary.to_excel(writer, index=False, sheet_name='Gibbs_Summary')
+            workbook = writer.book
+            worksheet = writer.sheets['Gibbs_Summary']
+            
+            # Format tampilan
+            header_fmt = workbook.add_format({'bold': True, 'bottom': 1})
+            float_fmt = workbook.add_format({'num_format': '0.000'})
+            
+            # Terapkan format header
+            for col_num, value in enumerate(df_summary.columns):
+                worksheet.write(0, col_num, value, header_fmt)
+                
+            # Terapkan format angka ke seluruh isi data
+            for row_idx, row in df_summary.iterrows():
+                for col_idx, value in enumerate(row):
+                    if isinstance(value, (int, float)):
+                        worksheet.write(row_idx + 1, col_idx, value, float_fmt)
+                    else:
+                        worksheet.write(row_idx + 1, col_idx, value)
+            
+            worksheet.set_column('A:B', 15)
+            worksheet.set_column('C:H', 18)
+            
+        output.seek(0)
+        return output.getvalue()
 
     def create_plot(self, plot_data, title, U_shift=0.0):
         plt.rcParams['font.family'] = 'DejaVu Sans'

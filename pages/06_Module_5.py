@@ -52,7 +52,7 @@ with tab1:
         p1, p2, p3 = st.columns(3)
         g_h2o = p1.number_input("G_H2O (eV)", value=-466.4078885915, format="%.10f")
         g_h2 = p2.number_input("G_H2 (eV)", value=-31.8575183992, format="%.10f")
-        mat_title = p3.text_input("Material Name", value="OER Catalyst")
+        catalyst_name = p3.text_input("Material Name", value="NiFePO", help="This will be used as the plot title.")
 
         # Updated: Primary button with full width
         if st.button("Generate Gibbs Profile", type="primary", use_container_width=True):
@@ -64,6 +64,7 @@ with tab1:
             
             if results:
                 st.session_state.m4_plot_data = results
+                st.session_state.current_catalyst = catalyst_name
                 st.success("Thermodynamic data ready!")
             else:
                 st.error("Data mismatch. Check Site/Step columns.")
@@ -76,7 +77,7 @@ with tab1:
         # Using the advanced reference plotting logic
         fig = st.session_state.gibbs_engine.create_plot(
             st.session_state.m4_plot_data, 
-            title=mat_title, 
+            title=st.session_state.current_catalyst, 
             U_shift=u_slider
         )
         st.pyplot(fig)
@@ -122,6 +123,17 @@ with tab2:
         
         # Updated: Professional Font Awesome caption replacing the green square emoji
         st.caption("<i class='fa-solid fa-circle-info' style='color:#007BFF;'></i> Blue highlight indicates the Potential Determining Step (PDS).", unsafe_allow_html=True)
+        cat_name = st.session_state.get('current_catalyst', 'Unknown')
+
+        excel_summary = st.session_state.gibbs_engine.generate_excel_summary(st.session_state.m4_plot_data, cat_name)
+        
+        st.download_button(
+            label=f"Download Gibbs Summary ({cat_name}) (.xlsx) ↓",
+            data=excel_summary,
+            file_name=f"Gibbs_Summary_{cat_name}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # --- TAB 3: INSIGHTS ---
 with tab3:
