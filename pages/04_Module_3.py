@@ -39,7 +39,7 @@ tab1, tab2 = st.tabs(["Step 1: Site Selection", "Step 2: Energy Analysis"])
 
 with tab1:
     st.subheader("Structure Setup")
-    st.info("Upload a ZIP file containing your relaxed slab files (PW.in and PW.out) from Module 2.")
+    st.write("Upload a ZIP file containing your relaxed slab files (PW.in and PW.out) from Module 2.")
 
     uploaded_slab_zip = st.file_uploader("Upload Relaxed Slab ZIP", type=["zip"], key="slab_uploader")
 
@@ -124,37 +124,49 @@ with tab1:
 
 with tab2:
     st.subheader("Results Analysis")
-    st.info("Upload the ZIP file containing your optimized reaction intermediate results (.out files).")
+    st.write("Upload the ZIP file containing your optimized reaction intermediate results (.out files).")
 
     if 'ads_analyzer' not in st.session_state:
         st.session_state.ads_analyzer = module_logic.AdsorbateAnalyzer()
 
+    st.write("##### Reference Isolated Molecules")
+    mol_configs = [("H2O", -34.2722502241), ("OH", -32.8706489556), ("O", -31.519078765), ("OOH", -64.6811961464)]
+    cols = st.columns(len(mol_configs))
+    
+    isolated_energies = {
+        mol: col.number_input(f"{mol} Energy (Ry)", value=val, format="%.10f") 
+        for col, (mol, val) in zip(cols, mol_configs)
+    }
+
     uploaded_results = st.file_uploader("Upload Results ZIP", type="zip", key="results_uploader")
 
-    if uploaded_results:
-        if st.button("Extract Energies & Group by Site", type="primary", use_container_width=True):
-            with st.spinner("Analyzing structural paths..."):
-                df_results = st.session_state.ads_analyzer.process_zip(uploaded_results.getvalue())
+    if uploaded_results and st.button("Extract & Calculate Energies", type="primary", use_container_width=True):
+        with st.spinner("Analyzing structural paths and calculating energies..."):
+            df_results = st.session_state.ads_analyzer.process_zip(uploaded_results.getvalue())
+            
+            # [CLEAN CODE] 3. Guard Clause: Tangani kegagalan di awal lalu stop (st.stop)
+            if df_results.empty:
+                st.warning("No valid OER data found. Check folder naming conventions.")
+                st.stop()
                 
-                if not df_results.empty:
-                    st.success(f"Successfully processed structures.")
-                    df_display = df_results[df_results['Path'].notna()]
-                    st.dataframe(
-                        df_display[['Step', 'Site', 'Energy (Ry)']].style.format({"Energy (Ry)": "{:.6f}"}), 
-                        use_container_width=True
-                    )
-                    
-                    excel_data = st.session_state.ads_analyzer.generate_excel(df_results)
-                    # Updated: Professional download style
-                    st.download_button(
-                        label="Download Excel Report ↓",
-                        data=excel_data,
-                        file_name="oer_energy_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("No valid OER data found. Check folder naming conventions.")
+            st.success("Successfully processed structures.")
+            df_ads = st.session_state.ads_analyzer.calculate_adsorption_energies(df_results, isolated_energies)
+            
+            # --- TAMPILAN TABEL ---
+            c1, c2 = st.columns(2)
+            c1.write("**Final Energies (Ry)**")
+            c1.dataframe(df_results.dropna(subset=['Path'])[['Step', 'Site', 'Energy (Ry)']].style.format({"Energy (Ry)": "{:.6f}"}), use_container_width=True)
+            
+            c2.write("**Adsorption Energies (eV)**")
+            if not df_ads.empty:
+                c2.dataframe(df_ads[['Step', 'Site', 'E_ads (eV)']].style.format({"E_ads (eV)": "{:.3f}"}), use_container_width=True)
+            else:
+                c2.warning("No adsorption data generated. Ensure 'slab' folder exists.")
+            
+            # --- DOWNLOAD BUTTONS ---
+            dl1, dl2 = st.columns(2)
+            dl1.download_button("Download Final Energies ↓", st.session_state.ads_analyzer.generate_excel(df_results), "Final_Energies.xlsx", use_container_width=True)
+            dl2.download_button("Download Adsorption Energies ↓", st.session_state.ads_analyzer.generate_adsorption_excel(df_ads, isolated_energies), "Adsorption_Energies.xlsx", use_container_width=True)
 
 # --- 5. FOOTER NAVIGATION ---
 st.divider()

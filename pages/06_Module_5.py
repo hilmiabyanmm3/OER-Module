@@ -14,7 +14,7 @@ from utils.ui_components import (
 
 # --- 1. GLOBAL STYLING & CONFIG ---
 st.set_page_config(
-    page_title="Module 5: Free Energy Diagram", 
+    page_title="Module 5: Free Energy Diagram | CMD-ITB", 
     layout="wide"
 )
 inject_global_css()
