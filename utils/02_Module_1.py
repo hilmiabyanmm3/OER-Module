@@ -105,7 +105,7 @@ class BulkWorkflowManager:
         return final_in, vasp_out.getvalue()
 
     # --- STEP 2: VARIATION (Permutasi Logam + Generate ZIP di Backend) ---
-    def generate_variations(self, base_in_content, target_metals, kx=6, ky=6, kz=3):
+    def generate_variations(self, base_in_content, target_metals, kx=6, ky=6, kz=3, progress_bar=None, progress_text=None):
         # 1. Pastikan base_in_content adalah string
         if isinstance(base_in_content, bytes):
             base_in_content = base_in_content.decode('utf-8')
@@ -143,7 +143,15 @@ class BulkWorkflowManager:
             unique_structs_list = []
 
             # 4. Loop Permutasi dan Filter Simetri
-            for labels in unique_labelings:
+            for idx_loop, labels in enumerate(unique_labelings, start=1):
+                
+                # --- BLOK UPDATE PROGRESS BAR ---
+                if progress_bar is not None and progress_text is not None:
+                    # Kalkulasi persentase (0 sampai 100)
+                    percent = int((idx_loop / len(unique_labelings)) * 100)
+                    progress_bar.progress(percent)
+                    progress_text.text(f"Processing {idx_loop} of {len(unique_labelings)} (Checking symmetry...)")
+
                 temp_struct = struct_base.copy()
                 for i, label in zip(target_indices, labels):
                     temp_struct.replace(i, label)

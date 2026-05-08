@@ -53,7 +53,8 @@ with step1:
 
             with st.expander("Preview PW.in"):
                 st.code(res_in, language='fortran')
-    
+
+            st.write("#### Download Results")
             c1, c2 = st.columns(2)
             # Updated: Download label style
             c1.download_button("Download .in ↓", res_in, "bulk.in", use_container_width=True)
@@ -75,6 +76,8 @@ with step2:
         generate_btn = st.form_submit_button("Generate Variations")
 
     if generate_btn and base_in:
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
         try:
             # 1. Parsing input komposisi dari user
             labels = []
@@ -86,8 +89,13 @@ with step2:
             response = Manager.generate_variations(
                 base_in_content=base_in.getvalue().decode('utf-8'), 
                 target_metals=labels, 
-                kx=kx, ky=ky, kz=kz
+                kx=kx, ky=ky, kz=kz,
+                progress_bar=progress_bar,    
+                progress_text=progress_text
             )
+
+            progress_text.empty()
+            progress_bar.empty()
             
             if "error" in response:
                 st.error(response["error"])
@@ -97,16 +105,16 @@ with step2:
                 vasp_zip_data = response["vasp_zip_bytes"]
                 
                 # --- PERBAIKAN VISUAL FRONT-END ---
-                st.success(f"✅ Berhasil! Struktur Awal: {response.get('initial_sg', 'N/A')}")
+                st.success(f"✅ Success! Initial Structure: {response.get('initial_sg', 'N/A')}")
                 
                 # Menampilkan metrik efisiensi simetri
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Total Permutasi", response.get('raw_permutations', 0))
-                m2.metric("Unik (Simetri)", len(variations))
-                m3.metric("Dibuang (Duplikat)", response.get('raw_permutations', 0) - len(variations))
+                m1.metric("All combinations", response.get('raw_permutations', 0))
+                m2.metric("Unique (Symmetry)", len(variations))
+                m3.metric("Discarded (Duplicates)", response.get('raw_permutations', 0) - len(variations))
 
                 # Tabel ringkasan dengan kolom Space Group
-                st.write("### 📊 Ringkasan Variasi")
+                st.write("#### Summary of Variations")
                 df_summary = pd.DataFrame([
                     {
                         "ID": v["name"], 
@@ -117,11 +125,11 @@ with step2:
                 st.dataframe(df_summary, use_container_width=True, hide_index=True)
                 
                 # Preview Code
-                with st.expander("🔍 Preview Variation 1 (PW.in)"):
+                with st.expander("Preview Variation 1 (PW.in)"):
                     st.code(variations[0]['qe_content'], language='fortran')
 
                 # Tombol Download
-                st.write("### 📥 Download Results")
+                st.write("#### Download Results")
                 c1, c2 = st.columns(2)
                 c1.download_button(
                     label="Download .in ZIP ↓", 
@@ -139,7 +147,7 @@ with step2:
                 )
 
         except Exception as e:
-            st.error(f"❌ Error processing: {str(e)}")
+            st.error(f"Error processing: {str(e)}")
 
 with step3:
     st.subheader("Results Extraction")
