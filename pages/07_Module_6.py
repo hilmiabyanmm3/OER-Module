@@ -1,5 +1,8 @@
 import streamlit as st
 import importlib
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+import numpy as np
 import pandas as pd
 import io
 from utils.ui_components import (
@@ -12,137 +15,115 @@ from utils.ui_components import (
     render_sidebar_progress 
 )
 
+#
 # --- 1. GLOBAL STYLING & CONFIG ---
-st.set_page_config(page_title="Module 5: Gibbs Free Energy Graph", layout="wide")
+st.set_page_config(
+    page_title="Module 6: Kinetics | CMD-ITB", 
+    layout="wide"
+)
 inject_global_css()
 style_sidebar()
 
-# --- 2. DYNAMIC IMPORT ---
+# 1. DYNAMIC IMPORT
 try:
-    module_logic = importlib.import_module("utils.06_Module_5")
-    bottleneck_engine = module_logic.BottleneckAnalyzer()
+    module_logic = importlib.import_module("utils.07_Module_6")
+    OERKineticModel = module_logic.OERKineticModel
 except Exception as e:
     st.error(f"Logic Module Error: {e}")
 
-# --- 3. NAVIGATION HEADER ---
-module_header("05", "Gibbs Free Energy Graph", "Visualizing data from previous calculations")
+# --- NAVIGATION HEADER ---
+module_header("06", "OER Kinetics Simulation", "Modeling reaction kinetics based on Gibbs free energy inputs")  
 
-# Define Tabs
-tab1, tab2, tab3 = st.tabs(["Step 1: Gibbs Analysis", "Step 2: Gibbs Graph", "Step 3: PDS"])
+st.subheader("Kinetics Dashboard")
 
-# --- TAB 1: CALCULATION & INTERACTIVE PLOT ---
-with tab1:
-    st.subheader("Step 1: Gibbs Free Energy Profile")
-    st.info("Combine DFT Energies and ZPE to visualize the OER reaction coordinate.")
+# SITE IDENTITY
+site_name = st.text_input("Active Site Name", value="Ni-Fe Site")
 
-    if 'gibbs_engine' not in st.session_state:
-        st.session_state.gibbs_engine = module_logic.GibbsAnalyzer()
+# STEP 1: ENERGETICS
+st.write("#### 1. Input Energetics ($\Delta G$ in eV)")
+with st.container(border=True):
+    d1, d2, d3 = st.columns(3)
+    dg1 = d1.number_input("H2O ads.", value=-0.320, format="%.3f")
+    dg2 = d2.number_input("OH form.", value=1.320, format="%.3f")
+    dg3 = d3.number_input("O form.", value=1.470, format="%.3f")
+    dg4 = d1.number_input("OOH form.", value=1.510, format="%.3f")
+    dg5 = d2.number_input("O2 des.", value=0.940, format="%.3f")
 
-    c1, c2 = st.columns(2)
-    file_e = c1.file_uploader("Upload Energy Summary (Module 4)", type=['xlsx', 'csv'])
-    file_z = c2.file_uploader("Upload ZPE Summary (Step 1)", type=['xlsx', 'csv'])
+# STEP 2: SIMULATION SETTINGS
+st.write("#### 2. Potential Sweep Settings")
+u_min = st.number_input("Min Potential (V)", value=1.2, step=0.1)
+u_max = st.number_input("Max Potential (V)", value=2.3, step=0.1)
 
-    if file_e and file_z:
-        st.divider()
-        st.write("#### Thermodynamics Parameters")
-        p1, p2, p3 = st.columns(3)
-        g_h2o = p1.number_input("G_H2O (eV)", value=-466.4078885915, format="%.10f")
-        g_h2 = p2.number_input("G_H2 (eV)", value=-31.8575183992, format="%.10f")
-        mat_title = p3.text_input("Material Name", value="OER Catalyst")
+# STEP 3: EXECUTION
+if st.button("Run Kinetics Simulation", type="primary", use_container_width=True):
+    model = OERKineticModel([dg1, dg2, dg3, dg4, dg5], site_name)
+    u_range = np.linspace(u_min, u_max, 100)
+    
+    with st.spinner("Solving ODEs and calculating TOF..."):
+        results = model.solve_coverage(u_range)
+    
+    # --- PLOTTING WITH GRIDSPEC ---
+    fig = plt.figure(figsize=(16, 7))
+    gs = GridSpec(1, 2, figure=fig)
+    
+    # AX 1: Surface Coverage
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax0.plot(u_range, results["H2O"], label='*H$_2$O', lw=3)
+    ax0.plot(u_range, results["OH"], label='*OH', lw=3)
+    ax0.plot(u_range, results["O"], label='*O', lw=3)
+    ax0.plot(u_range, results["OOH"], label='*OOH', lw=3)
+    ax0.plot(u_range, results["star"], label='* (Free site)', linestyle='--', color='gray')
+    ax0.set_xlabel('$\Delta U$ [V]', fontsize=14)
+    ax0.set_ylabel('Surface Coverage [$\Theta$]', fontsize=14)
+    ax0.set_title("Surface Evolution", fontsize=16, fontweight='bold')
+    ax0.legend(fontsize=12)
+    ax0.grid(linestyle='--', alpha=0.6)
 
-        if st.button("Generate Gibbs Profile", type="primary", use_container_width=True):
-            df_e = pd.read_excel(file_e) if file_e.name.endswith('xlsx') else pd.read_csv(file_e)
-            df_z = pd.read_excel(file_z) if file_z.name.endswith('xlsx') else pd.read_csv(file_z)
-            
-            results = st.session_state.gibbs_engine.calculate_deltas(df_e, df_z, g_h2o, g_h2, U=0.0)
-            
-            if results:
-                st.session_state.m4_plot_data = results
-                st.success("Thermodynamic data ready!")
-            else:
-                st.error("Data mismatch. Check Site/Step columns.")
+    # AX 2: TOF Graph (using your provided styling)
+    ax1 = fig.add_subplot(gs[0, 1])
+    tof_log = np.log10(results["TOF"])
+    
+    # Custom colors from your snippet
+    colors = ["orange","green","blue","red","purple","salmon","pink","cyan","lime","brown","magenta","teal"]
+    
+    # Plotting logic based on your line-style requirements
+    ax1.plot(u_range, tof_log, '-', color=colors[1], label=site_name, lw=4)
+    
+    # Apply your specific axis limits and labels
+    ax1.set_xlim(u_min, u_max)
+    ax1.set_ylim(-7, 9)
+    ax1.set_ylabel('log$_{10}$(TOF) [site$^{-1}$ s$^{-1}$]', fontsize=20)
+    ax1.set_xlabel('$\Delta U$ [V]', fontsize=20)
+    ax1.tick_params(axis='both', labelsize=20)
+    ax1.grid(linestyle='--')
+    ax1.legend(loc="lower right", fontsize=14)
+    ax1.set_title("TOF Performance", fontsize=16, fontweight='bold')
 
-    if 'm4_plot_data' in st.session_state:
-        st.divider()
-        u_slider = st.slider("Applied Potential (U vs RHE)", 0.0, 2.5, 1.23, step=0.01, 
-                             help="Real-time shift of electrochemical steps.")
-        
-        fig = st.session_state.gibbs_engine.create_plot(
-            st.session_state.m4_plot_data, 
-            title=mat_title, 
-            U_shift=u_slider
-        )
-        st.pyplot(fig)
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # --- DOWNLOAD OPTION (330 PPI) ---
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=330, bbox_inches='tight')
+    st.download_button("Download High-Res Graph (330 PPI)", buf.getvalue(), "TOF_Coverage_Analysis.png", "image/png")
 
-        # Updated: Download Icon with ↓
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=330, bbox_inches='tight')
-        st.download_button("Download Current Plot ↓", buf.getvalue(), "oer_profile.png", "image/png", use_container_width=True)
-
-# --- TAB 2: SUMMARY TABLE ---
-with tab2:
-    st.subheader("Step 2: Gibbs Graph Summary")
-    if 'm4_plot_data' not in st.session_state:
-        # Updated: Clean Warning
-        st.warning("Please complete the Gibbs Analysis in Step 1 first.")
-    else:
-        st.write("#### Site Summary & Potential Determining Steps")
-        
-        table_data = []
-        for data in st.session_state.m4_plot_data:
-            table_data.append({
-                "Site": data["label"],
-                "ΔG1": data["deltaG"][0],
-                "ΔG2": data["deltaG"][1],
-                "ΔG3": data["deltaG"][2],
-                "ΔG4": data["deltaG"][3],
-                "ΔG5": data["deltaG"][4],
-                "Overpotential (V)": data["overpotential"]
-            })
-        
-        df_summary = pd.DataFrame(table_data)
-
-        def highlight_pds(row):
-            dg_cols = ['ΔG2', 'ΔG3', 'ΔG4', 'ΔG5']
-            styles = [''] * len(row)
-            max_val = row[dg_cols].max()
-            for i, col in enumerate(row.index):
-                if col in dg_cols and row[col] == max_val:
-                    styles[i] = 'background-color: #eef6ff; font-weight: bold; color: #007BFF;'
-            return styles
-
-        numeric_cols = ["ΔG1", "ΔG2", "ΔG3", "ΔG4", "ΔG5", "Overpotential (V)"]
-        st.dataframe(df_summary.style.format("{:.3f}", subset=numeric_cols).apply(highlight_pds, axis=1), use_container_width=True)
-        # Updated: Professional Caption Icon
-        st.caption("<i class='fa-solid fa-circle-info' style='color:#007BFF;'></i> Blue highlight indicates the Potential Determining Step (PDS).", unsafe_allow_html=True)
-
-# --- TAB 3: INSIGHTS ---
-with tab3:
-    st.subheader("Step 3: Bottleneck Analysis (PDS)")
-    if 'm4_plot_data' not in st.session_state:
-        st.warning("Please complete the Gibbs Analysis in Step 1 first.")
-    else:
-        analysis_results = bottleneck_engine.identify_bottlenecks(st.session_state.m4_plot_data)
-        
-        st.subheader("Insight-Driven Design")
-        for res in analysis_results:
-            # Updated: Cleaner Expander Label with Font Awesome
-            with st.expander(f"Analysis for Site: {res['Site']}", expanded=True):
-                c1, c2 = st.columns([1, 2])
-                c1.metric("PDS Step", res['PDS Step'])
-                c1.metric("Overpotential", f"{res['Overpotential (V)']:.2f} V")
-                c2.info(f"**Researcher Insight:** {res['Prescription']}")
+    with st.expander("View Raw Data Table"):
+        st.dataframe(pd.DataFrame(results, index=u_range))
 
 # --- FOOTER ---
 st.divider()
-col_b, col_n = st.columns([1, 4])
-with col_b:
-    # Updated: Back Arrow
-    if st.button("← Back"):
-        st.switch_page("pages/05_Module_4.py")
-with col_n:
-    # Updated: Forward Arrow
-    if st.button("Complete Module 5 →", use_container_width=True):
-        st.switch_page("pages/07_Module_6.py")
 
+col_b, col_n = st.columns([1, 4])
+
+with col_b:
+    # Standard Typographic Back Arrow
+    if st.button("← Back"):
+        st.switch_page("pages/06_Module_5.py")
+
+with col_n:
+    # Standard Typographic Forward Arrow with Primary Styling
+    if st.button("Complete Module 6 →", type="primary", use_container_width=True):
+        st.switch_page("pages/08_Module_7.py")
+
+# Ensure Sidebar remains consistent
 render_sidebar_progress(st.session_state.get('progress', 65))
