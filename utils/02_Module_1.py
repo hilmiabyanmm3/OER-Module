@@ -33,6 +33,7 @@ class BulkWorkflowManager:
 
         unique_elements = list(set(atoms.get_chemical_symbols()))
         ntyp = len(unique_elements)
+        nat = len(atoms)
         
         # 1. BERSIHKAN TEMPLATE DARI CARDS LAMA
         cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
@@ -42,7 +43,16 @@ class BulkWorkflowManager:
             template_clean = re.sub(r'(?i)(ntyp\s*=\s*)\d+', r'\g<1>' + str(ntyp), template_clean)
         else:
             template_clean = re.sub(r'(?i)(/[\s\n]*)$', f'   ntyp = {ntyp}\n/', template_clean, count=1)
-        template_clean = re.sub(r'(?i)starting_magnetization\(\d+\)\s*=\s*[\d\.\-]+[\n\r]*', '', template_clean)
+        
+        # Update nilai nat
+        if re.search(r'nat\s*=', template_clean, re.IGNORECASE):
+            # Jika sudah ada parameter nat, ganti angkanya
+            template_clean = re.sub(r'(?i)(nat\s*=\s*)\d+', r'\g<1>' + str(nat), template_clean)
+        else:
+            # Jika belum ada parameter nat, tambahkan di akhir namelist &SYSTEM sebelum tanda /
+            template_clean = re.sub(r'(?i)(/[\s\n]*)$', f'   nat = {nat}\n/', template_clean, count=1)
+        
+        template_clean = re.sub(r'(?i)[ \t]*starting_magnetization\(\d+\)\s*=\s*[\d\.\-]+[\n\r]*', '', template_clean)
         
         # 2. BANGUN ATOMIC_SPECIES & MAGNETIZATION BARU SESUAI CIF
         new_species_str = "\n\nATOMIC_SPECIES\n"
@@ -61,7 +71,15 @@ class BulkWorkflowManager:
 
         system_match = re.search(r'(?i)(&SYSTEM.*?)(/)', template_clean, flags=re.DOTALL)
         if system_match:
-            new_system = system_match.group(1) + mag_str + system_match.group(2)
+            # 1. Bersihkan spasi horizontal yang tertinggal di ujung group(1)
+            group1_clean = system_match.group(1).rstrip(" \t")
+            
+            # 2. Pastikan ada enter/newline sebelum memasukkan mag_str
+            if not group1_clean.endswith("\n"):
+                group1_clean += "\n"
+                
+            # 3. Gabungkan kembali
+            new_system = group1_clean + mag_str + system_match.group(2)
             template_clean = template_clean.replace(system_match.group(0), new_system)
 
         # 3. BANGUN BLOK K_POINTS, CELL_PARAMETERS, ATOMIC_POSITIONS
