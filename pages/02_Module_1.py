@@ -1,5 +1,6 @@
 import streamlit as st
 import importlib
+import pandas as pd
 from utils.ui_components import (
     module_header, 
     main_content_text, 
@@ -75,12 +76,18 @@ with step2:
 
     if generate_btn and base_in:
         try:
+            # 1. Parsing input komposisi dari user
             labels = []
             for part in comp_str.split(','):
                 el, count = part.split(':')
                 labels.extend([el.strip()] * int(count))
             
-            response = Manager.generate_variations(base_in_content=base_in.getvalue().decode('utf-8'), target_metals=labels, kx=kx, ky=ky, kz=kz)
+            # 2. Memanggil fungsi backend yang sudah menggunakan Pymatgen
+            response = Manager.generate_variations(
+                base_in_content=base_in.getvalue().decode('utf-8'), 
+                target_metals=labels, 
+                kx=kx, ky=ky, kz=kz
+            )
             
             if "error" in response:
                 st.error(response["error"])
@@ -89,18 +96,50 @@ with step2:
                 in_zip_data = response["in_zip_bytes"]
                 vasp_zip_data = response["vasp_zip_bytes"]
                 
-                st.success(f"Success! Generated {len(variations)} unique variations.")
+                # --- PERBAIKAN VISUAL FRONT-END ---
+                st.success(f"✅ Berhasil! Struktur Awal: {response.get('initial_sg', 'N/A')}")
                 
-                with st.expander("Preview Variation 1 (PW.in)"):
+                # Menampilkan metrik efisiensi simetri
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Permutasi", response.get('raw_permutations', 0))
+                m2.metric("Unik (Simetri)", len(variations))
+                m3.metric("Dibuang (Duplikat)", response.get('raw_permutations', 0) - len(variations))
+
+                # Tabel ringkasan dengan kolom Space Group
+                st.write("### 📊 Ringkasan Variasi")
+                df_summary = pd.DataFrame([
+                    {
+                        "ID": v["name"], 
+                        "Space Group": v["sg"], 
+                        "Sequence": v["labels"]
+                    } for v in variations
+                ])
+                st.dataframe(df_summary, use_container_width=True, hide_index=True)
+                
+                # Preview Code
+                with st.expander("🔍 Preview Variation 1 (PW.in)"):
                     st.code(variations[0]['qe_content'], language='fortran')
 
+                # Tombol Download
+                st.write("### 📥 Download Results")
                 c1, c2 = st.columns(2)
-                # Updated: Download label style
-                c1.download_button("Download .in ZIP ↓", in_zip_data, "qe_inputs.zip", use_container_width=True)
-                c2.download_button("Download .vasp ZIP ↓", vasp_zip_data, "vasp_structures.zip", use_container_width=True)
+                c1.download_button(
+                    label="Download .in ZIP ↓", 
+                    data=in_zip_data, 
+                    file_name="qe_inputs.zip", 
+                    mime="application/zip",
+                    use_container_width=True
+                )
+                c2.download_button(
+                    label="Download .vasp ZIP ↓", 
+                    data=vasp_zip_data, 
+                    file_name="vasp_structures.zip", 
+                    mime="application/zip",
+                    use_container_width=True
+                )
 
         except Exception as e:
-            st.error(f"Error processing: {str(e)}")
+            st.error(f"❌ Error processing: {str(e)}")
 
 with step3:
     st.subheader("Results Extraction")

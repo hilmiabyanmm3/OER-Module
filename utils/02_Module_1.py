@@ -5,9 +5,10 @@ import zipfile
 import pandas as pd
 from ase.io import read, write
 from ase.data import atomic_masses, atomic_numbers
-import itertools
-import sympy
-import importlib    
+from pymatgen.core import Structure
+from pymatgen.io.ase import AseAtomsAdaptor
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from pymatgen.analysis.structure_matcher import StructureMatcher
 from sympy.utilities.iterables import multiset_permutations
 
 class BulkWorkflowManager:
@@ -105,77 +106,100 @@ class BulkWorkflowManager:
 
     # --- STEP 2: VARIATION (Permutasi Logam + Generate ZIP di Backend) ---
     def generate_variations(self, base_in_content, target_metals, kx=6, ky=6, kz=3):
-        # Pastikan base_in_content adalah string
+        # 1. Pastikan base_in_content adalah string
         if isinstance(base_in_content, bytes):
             base_in_content = base_in_content.decode('utf-8')
 
-        buf = io.StringIO(base_in_content)
-        atoms = read(buf, format='espresso-in') # Tambah format agar lebih stabil
-        
-        symbols = atoms.get_chemical_symbols()
-        target_indices = [i for i, sym in enumerate(symbols) if sym in ['Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt']]
-        
-        if len(target_indices) != len(target_metals):
-            return {"error": f"Atom mismatch: Site logam ditemukan ({len(target_indices)}) != jumlah input ({len(target_metals)})"}
+        try:
+            # 2. Baca dengan ASE lalu konversi ke Pymatgen Structure
+            buf = io.StringIO(base_in_content)
+            ase_atoms = read(buf, format='espresso-in')
+            struct_base = AseAtomsAdaptor.get_structure(ase_atoms)
             
-        # Generate permutasi unik (Multiset)
-        unique_labelings = list(multiset_permutations(target_metals))
-        unique_labelings.sort() 
-        
-        # --- REGEX CLEANUP ---
-        # Gunakan (?s) di dalam string pattern sebagai pengganti re.DOTALL
-        cards_pattern = re.compile(r'(?i)(ATOMIC_POSITIONS)')
-        base_template_parts = cards_pattern.split(base_in_content)
-        base_template_only = base_template_parts[0].strip()
-        
-        # Hapus K_POINTS lama dengan cara yang aman
-        base_template_only = re.sub(r'(?i)K_POINTS.*?\n[\d\s\.]+\n', '', base_template_only)
-        kpoints_str = f"\nK_POINTS automatic\n{kx} {ky} {kz} 0 0 0\n"
-
-        results = []
-        for idx, labels in enumerate(unique_labelings, 1):
-            new_atoms = atoms.copy()
-            new_symbols = list(new_atoms.get_chemical_symbols())
+            # Analisis Spacegroup awal untuk info user
+            sga_init = SpacegroupAnalyzer(struct_base)
+            initial_sg = sga_init.get_space_group_symbol()
             
-            for i, label in zip(target_indices, labels):
-                new_symbols[i] = label
+            # Ambil simbol kimia untuk mencari target situs
+            symbols = [site.species_string for site in struct_base]
+            target_indices = [i for i, sym in enumerate(symbols) if sym in ['Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt']]
+            
+            if len(target_indices) != len(target_metals):
+                return {"error": f"Site logam ({len(target_indices)}) != jumlah input ({len(target_metals)})"}
                 
-            new_atoms.set_chemical_symbols(new_symbols)
-            
-            # VASP output
-            v_out = io.StringIO()
-            write(v_out, new_atoms, format='vasp')
-            vasp_content = v_out.getvalue()
-            
-            # QE output (Angstrom)
-            pos_str = "\nATOMIC_POSITIONS angstrom\n"
-            for atom in new_atoms:
-                pos_str += f"{atom.symbol:2}   {atom.position[0]:14.10f} {atom.position[1]:14.10f} {atom.position[2]:14.10f}\n"
-            
-            final_in = base_template_only + kpoints_str + pos_str
-            
-            results.append({
-                "name": f"var_{idx}",
-                "labels": "-".join(labels),
-                "qe_content": final_in,
-                "vasp_content": vasp_content
-            })
+            # 3. Generate Permutasi Unik (Sympy Multiset)
+            unique_labelings = list(multiset_permutations(target_metals))
+            unique_labelings.sort() 
 
-        # ZIP Packing
-        in_zip_buffer = io.BytesIO()
-        vasp_zip_buffer = io.BytesIO()
-        
-        with zipfile.ZipFile(in_zip_buffer, "w") as z_in, \
-            zipfile.ZipFile(vasp_zip_buffer, "w") as z_vasp:
-            for var in results:
-                z_in.writestr(f"{var['name']}.in", var['qe_content'])
-                z_vasp.writestr(f"{var['name']}.vasp", var['vasp_content'])
+            # --- REGEX CLEANUP (Header QE) ---
+            cards_pattern = re.compile(r'(?i)(ATOMIC_POSITIONS)')
+            base_template_parts = cards_pattern.split(base_in_content)
+            base_template_only = base_template_parts[0].strip()
+            base_template_only = re.sub(r'(?i)K_POINTS.*?\n[\d\s\.]+\n', '', base_template_only)
+            kpoints_str = f"\n\nK_POINTS automatic\n{kx} {ky} {kz} 0 0 0\n"
 
-        return {
-            "in_zip_bytes": in_zip_buffer.getvalue(),
-            "vasp_zip_bytes": vasp_zip_buffer.getvalue(),
-            "variations": results
-        }
+            results = []
+            matcher = StructureMatcher(ltol=0.2, stol=0.3, angle_tol=5) # Untuk filter duplikat simetri
+            unique_structs_list = []
+
+            # 4. Loop Permutasi dan Filter Simetri
+            for labels in unique_labelings:
+                temp_struct = struct_base.copy()
+                for i, label in zip(target_indices, labels):
+                    temp_struct.replace(i, label)
+                
+                # Cek apakah struktur ini setara secara simetri dengan yang sudah ada
+                is_duplicate = False
+                for existing_s in unique_structs_list:
+                    if matcher.fit(temp_struct, existing_s):
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
+                    unique_structs_list.append(temp_struct)
+                    
+                    # Analisis Spacegroup baru setelah substitusi
+                    sga_new = SpacegroupAnalyzer(temp_struct)
+                    new_sg = sga_new.get_space_group_symbol()
+                    
+                    idx = len(unique_structs_list)
+                    
+                    # --- Export VASP ---
+                    vasp_content = temp_struct.to(fmt="poscar")
+                    
+                    # --- Export QE (Angstrom) ---
+                    pos_str = "ATOMIC_POSITIONS angstrom\n"
+                    for site in temp_struct:
+                        pos_str += f"{site.species_string:2}    {site.x:14.10f} {site.y:14.10f} {site.z:14.10f}\n"
+                    
+                    results.append({
+                        "name": f"var_{idx}",
+                        "labels": "-".join(labels),
+                        "sg": new_sg, # Simpan simbol spacegroup
+                        "qe_content": base_template_only + kpoints_str + pos_str,
+                        "vasp_content": vasp_content
+                    })
+
+            # 5. ZIP Packing
+            in_zip_buffer = io.BytesIO()
+            vasp_zip_buffer = io.BytesIO()
+            
+            with zipfile.ZipFile(in_zip_buffer, "w") as z_in, \
+                zipfile.ZipFile(vasp_zip_buffer, "w") as z_vasp:
+                for var in results:
+                    z_in.writestr(f"{var['name']}.in", var['qe_content'])
+                    z_vasp.writestr(f"{var['name']}.vasp", var['vasp_content'])
+
+            return {
+                "in_zip_bytes": in_zip_buffer.getvalue(),
+                "vasp_zip_bytes": vasp_zip_buffer.getvalue(),
+                "variations": results,
+                "initial_sg": initial_sg,
+                "raw_permutations": len(unique_labelings)
+            }
+
+        except Exception as e:
+            return {"error": f"Internal Error: {str(e)}"}
 
     # --- STEP 3: DATA EXTRACTION ---
     def extract_energies(self, uploaded_zip):
