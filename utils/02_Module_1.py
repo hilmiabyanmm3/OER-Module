@@ -6,6 +6,9 @@ import pandas as pd
 from ase.io import read, write
 from ase.data import atomic_masses, atomic_numbers
 import itertools
+import sympy
+import importlib    
+from sympy.utilities.iterables import multiset_permutations
 
 class BulkWorkflowManager:
     def __init__(self):
@@ -84,64 +87,72 @@ class BulkWorkflowManager:
 
     # --- STEP 2: VARIATION (Permutasi Logam + Generate ZIP di Backend) ---
     def generate_variations(self, base_in_content, target_metals, kx=6, ky=6, kz=3):
-        
+        # Pastikan base_in_content adalah string
+        if isinstance(base_in_content, bytes):
+            base_in_content = base_in_content.decode('utf-8')
+
         buf = io.StringIO(base_in_content)
-        atoms = read(buf, format='espresso-in') 
+        atoms = read(buf, format='espresso-in') # Tambah format agar lebih stabil
         
         symbols = atoms.get_chemical_symbols()
-        # Ambil indeks yang merupakan logam transisi
         target_indices = [i for i, sym in enumerate(symbols) if sym in ['Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt']]
         
         if len(target_indices) != len(target_metals):
-            return {"error": f"Atom mismatch: Target metals in input ({len(target_metals)}) != metal sites found in structure ({len(target_indices)})."}
+            return {"error": f"Atom mismatch: Site logam ditemukan ({len(target_indices)}) != jumlah input ({len(target_metals)})"}
             
-        unique_labelings = sorted(list(set(itertools.permutations(target_metals))))
+        # Generate permutasi unik (Multiset)
+        unique_labelings = list(multiset_permutations(target_metals))
+        unique_labelings.sort() 
         
+        # --- REGEX CLEANUP ---
+        # Gunakan (?s) di dalam string pattern sebagai pengganti re.DOTALL
         cards_pattern = re.compile(r'(?i)(ATOMIC_POSITIONS)')
-        base_template_only = cards_pattern.split(base_in_content)[0].strip()
-        base_template_only = re.sub(r'(?i)K_POINTS.*?\n[\d\s\.]+\n', '', base_template_only, flags=re.DOTALL)
+        base_template_parts = cards_pattern.split(base_in_content)
+        base_template_only = base_template_parts[0].strip()
+        
+        # Hapus K_POINTS lama dengan cara yang aman
+        base_template_only = re.sub(r'(?i)K_POINTS.*?\n[\d\s\.]+\n', '', base_template_only)
         kpoints_str = f"\nK_POINTS automatic\n{kx} {ky} {kz} 0 0 0\n"
 
         results = []
         for idx, labels in enumerate(unique_labelings, 1):
             new_atoms = atoms.copy()
-            new_symbols = new_atoms.get_chemical_symbols()
+            new_symbols = list(new_atoms.get_chemical_symbols())
             
             for i, label in zip(target_indices, labels):
                 new_symbols[i] = label
                 
             new_atoms.set_chemical_symbols(new_symbols)
             
+            # VASP output
             v_out = io.StringIO()
             write(v_out, new_atoms, format='vasp')
             vasp_content = v_out.getvalue()
             
+            # QE output (Angstrom)
             pos_str = "\nATOMIC_POSITIONS angstrom\n"
             for atom in new_atoms:
-                pos_str += f"{atom.symbol}  {atom.position[0]:.10f} {atom.position[1]:.10f} {atom.position[2]:.10f}\n"
+                pos_str += f"{atom.symbol:2}   {atom.position[0]:14.10f} {atom.position[1]:14.10f} {atom.position[2]:14.10f}\n"
             
             final_in = base_template_only + kpoints_str + pos_str
             
             results.append({
                 "name": f"var_{idx}",
-                "labels": labels,
+                "labels": "-".join(labels),
                 "qe_content": final_in,
                 "vasp_content": vasp_content
             })
 
-        # --- PEMBUATAN 2 ZIP TERPISAH DI BACKEND ---
+        # ZIP Packing
         in_zip_buffer = io.BytesIO()
         vasp_zip_buffer = io.BytesIO()
         
-        with zipfile.ZipFile(in_zip_buffer, "w", zipfile.ZIP_DEFLATED) as z_in, \
-             zipfile.ZipFile(vasp_zip_buffer, "w", zipfile.ZIP_DEFLATED) as z_vasp:
+        with zipfile.ZipFile(in_zip_buffer, "w") as z_in, \
+            zipfile.ZipFile(vasp_zip_buffer, "w") as z_vasp:
             for var in results:
-                name = var['name']
-                # Masukkan ke zip masing-masing (tanpa sub-folder agar rapi)
-                z_in.writestr(f"{name}.in", var['qe_content'].encode('utf-8'))
-                z_vasp.writestr(f"{name}.vasp", var['vasp_content'].encode('utf-8'))
+                z_in.writestr(f"{var['name']}.in", var['qe_content'])
+                z_vasp.writestr(f"{var['name']}.vasp", var['vasp_content'])
 
-        # Kembalikan dictionary berisi kedua file ZIP dan list hasil untuk preview
         return {
             "in_zip_bytes": in_zip_buffer.getvalue(),
             "vasp_zip_bytes": vasp_zip_buffer.getvalue(),
