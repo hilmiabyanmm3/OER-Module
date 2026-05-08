@@ -26,46 +26,53 @@ class SurfaceGenerator:
 
     def generate_surface(self, miller_index, num_layers, vacuum_user, supercell_matrix, free_fraction):
         """
-        Cuts the slab and applies constraints to the bottom layers.
-        free_fraction: decimal (e.g., 0.33 for 1/3) representing the top portion NOT fixed.
+        Cuts the slab, shifts atoms to Z=0, and exports in Angstrom units.
         """
-        # 1. Build the Slab
+        # 1. Build the initial Slab
         slab = surface(self.bulk_atoms, miller_index, num_layers)
-        slab.center(vacuum=vacuum_user/2.0, axis=2)
         
+        # Geser dulu atomnya ke titik 0 secara Cartesian
+        # Supaya nempel di "lantai" cell
+        slab.translate([0, 0, 0.01-np.min(slab.positions[:, 2])])
+        
+        # Sekarang baru set vacuum di atasnya
+        # Kita hitung tinggi slab sekarang + vacuum dari user
+        z_max_atoms = np.max(slab.positions[:, 2])
+        new_cell_height = z_max_atoms + vacuum_user
+        
+        current_cell = slab.get_cell()
+        current_cell[2, 2] = new_cell_height
+        slab.set_cell(current_cell)
+        
+        # Buat Supercell
         P = [[supercell_matrix[0], 0, 0], 
              [0, supercell_matrix[1], 0], 
              [0, 0, supercell_matrix[2]]]
         slab_super = make_supercell(slab, P)
         
         # 2. Apply Constraints (Fix the bottom atoms)
-        # We calculate a Z-threshold. Atoms below this Z will be fixed.
         z_coords = slab_super.positions[:, 2]
         z_min = np.min(z_coords)
         z_max = np.max(z_coords)
         z_range = z_max - z_min
         
-        # Threshold: if free_fraction is 0.33, we fix the bottom 67%
         threshold = z_min + (z_range * (1.0 - free_fraction))
-        
         fixed_indices = [atom.index for atom in slab_super if atom.position[2] < threshold]
-        constraint = FixAtoms(indices=fixed_indices)
-        slab_super.set_constraint(constraint)
         
-        # 3. Merge Slab Coords with User Template
+        # 3. Merge Slab Coords with User Template (FORMAT: ANGSTROM)
         num_atoms = len(slab_super)
         updated_temp = re.sub(r'nat\s*=\s*\d+', f'nat = {num_atoms}', self.template_content)
         
         cell = slab_super.get_cell()
         cell_str = "\nCELL_PARAMETERS angstrom\n" + "\n".join([f"  {v[0]:14.10f} {v[1]:14.10f} {v[2]:14.10f}" for v in cell])
         
-        pos = slab_super.get_scaled_positions()
+        # Ambil posisi dalam Angstrom (Cartesian), bukan scaled/crystal
+        pos_angstrom = slab_super.get_positions()
         syms = slab_super.get_chemical_symbols()
         
-        # Logic to add '0 0 0' or '1 1 1' based on constraints
-        pos_str = "\nATOMIC_POSITIONS crystal\n"
-        for i, (s, p) in enumerate(zip(syms, pos)):
-            # If the index is in fixed_indices, we use 0 0 0 to freeze it in QE
+        pos_str = "\nATOMIC_POSITIONS angstrom\n"
+        for i, (s, p) in enumerate(zip(syms, pos_angstrom)):
+            # Pakai '0 0 0' untuk atom yang di-freeze di QE
             freeze = "0 0 0" if i in fixed_indices else "1 1 1"
             pos_str += f"  {s:2} {p[0]:14.10f} {p[1]:14.10f} {p[2]:14.10f} {freeze}\n"
         

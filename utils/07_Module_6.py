@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.integrate import ode
+from scipy.integrate import solve_ivp
 
 class OERKineticModel:
     def __init__(self, dg0_values, site_name, T=298.15):
@@ -40,23 +41,30 @@ class OERKineticModel:
         return [r[0]-r[1], r[1]-r[2], r[2]-r[3], r[3]-r[4], r[4]-r[0]]
 
     def solve_coverage(self, U_range):
-        # We now include TOF in the results
         res_data = {"H2O": [], "OH": [], "O": [], "OOH": [], "star": [], "TOF": []}
-        
+
         for u in U_range:
             kF, kR = self.get_rate_constants(u)
-            solver = ode(self.get_odes).set_integrator('vode', method='bdf', atol=1e-12, rtol=1e-12)
-            solver.set_initial_value([0, 0, 0, 0, 1], 0).set_f_params(kF, kR)
-            y = solver.integrate(1e6) 
-            
-            # TOF is the rate of Step 5: r = kF[4]*theta_OOH - kR[4]*theta_star*x_O2
+
+            sol = solve_ivp(
+                fun=self.get_odes,
+                t_span=(0.0, 1e3),
+                y0=[0, 0, 0, 0, 1],
+                method="BDF",
+                args=(kF, kR),
+                atol=1e-8,
+                rtol=1e-8,
+                dense_output=False,
+            )
+            y = sol.y[:, -1]
+
             tof = kF[4] * y[3] - kR[4] * y[4] * self.x_O2
-            
+
             res_data["H2O"].append(y[0])
             res_data["OH"].append(y[1])
             res_data["O"].append(y[2])
             res_data["OOH"].append(y[3])
             res_data["star"].append(y[4])
-            res_data["TOF"].append(max(tof, 1e-10)) # Avoid log10(0)
-            
+            res_data["TOF"].append(max(tof, 1e-10))
+
         return res_data

@@ -1,11 +1,24 @@
 import streamlit as st
-from utils.ui_components import module_header, main_content_text, sub_section_header, highlight_box
+from utils.ui_components import (
+    module_header, 
+    main_content_text, 
+    sub_section_header, 
+    highlight_box,
+    inject_global_css,   
+    style_sidebar,      
+    render_sidebar_progress 
+)
 
-# --- 1. LAYOUT SETUP ---
+# --- 1. GLOBAL STYLING ---
+# Ensure the modern font and Font Awesome are loaded
+inject_global_css()
+style_sidebar()
+
+# --- 2. LAYOUT SETUP ---
 left, mid, right = st.columns([1, 4, 1])
 
 with mid:
-    # --- 2. HEADER ---
+    # --- 3. HEADER ---
     module_header("PRE", "Pre-requisite", "Essential tools and resources for OER modeling")
 
     main_content_text("""
@@ -14,23 +27,23 @@ with mid:
         These tools will be used throughout the 7 modules.
     """)
 
-    # --- 3. DATA SOURCE (Materials Project) ---
-    sub_section_header("1. Bulk Data Source", emoji="🌐")
+    # --- 4. DATA SOURCE (Materials Project) ---
+    # Updated: Database icon
+    sub_section_header("1. Bulk Data Source", icon_class="fa-solid fa-database")
     main_content_text("""
         We will use the <b>Materials Project</b> database to obtain the initial 
         crystal structures for our Nickel Phosphate models.
     """)
     st.link_button("Access Materials Project", "https://next-gen.materialsproject.org/materials")
     
-    # Updated Research-Focused Tip
     highlight_box("""
         <b>Tip:</b> Always record the unique <b>Material ID (mp-id)</b> of your bulk structure. 
-        This 'fingerprint' ensures your research is reproducible and allows you to 
-        quickly cross-reference thermodynamic properties later.
+        This 'fingerprint' ensures your research is reproducible.
     """, type="info")
 
-    # --- 4. VISUALIZATION (VESTA) ---
-    sub_section_header("2. Model Visualization", emoji="💎")
+    # --- 5. VISUALIZATION (VESTA) ---
+    # Updated: 3D Cube icon
+    sub_section_header("2. Model Visualization", icon_class="fa-solid fa-cube")
     main_content_text("""
         <b>VESTA</b> (Visualization for Electronic and Structural Analysis) is required 
         for inspecting our 3D crystal structures, verifying slab cuts, and 
@@ -38,8 +51,22 @@ with mid:
     """)
     st.link_button("Download VESTA", "https://www.jp-minerals.org/vesta/en/download.html")
 
-    # --- 5. DOWNLOAD INPUT FILES ---
-    sub_section_header("3. Download Input Files", emoji="📁")
+    # --- 6. PYTHON ENVIRONMENT ---
+    # Updated: Code icon
+    sub_section_header("3. Python Environment", icon_class="fa-solid fa-code")
+    main_content_text("""Required for executing simulation scripts and backend dependencies.""")
+    
+    col_py1, col_py2, col_py3 = st.columns(3)
+    with col_py1:
+        st.link_button("Python for Windows", "https://www.python.org/downloads/windows/")
+    with col_py2:
+        st.link_button("Python for macOS", "https://www.python.org/downloads/macos/")
+    with col_py3:
+        st.link_button("Python for Linux", "https://www.python.org/downloads/source/")
+
+    # --- 7. DOWNLOAD INPUT FILES ---
+    # Updated: Download icon
+    sub_section_header("4. Download Input Files", icon_class="fa-solid fa-download")
     main_content_text("""
         Download the specific input templates, pseudo-potentials, and reference data 
         required for the <b>NiFePO</b> OER simulation modules.
@@ -47,15 +74,22 @@ with mid:
     
     st.link_button("Download Input Files", "https://drive.google.com/drive/folders/1YgqMfzjpEIW3pUAWATGuSstM95r9pO8r?usp=sharing")
 
-    # --- 6. READINESS CHECK ---
+    # --- 8. READINESS CHECK ---
     st.divider()
-    sub_section_header("Readiness Check", emoji="✅")
+    # Updated: Clipboard Check icon
+    sub_section_header("Readiness Check", icon_class="fa-solid fa-clipboard-check")
     
     ready = st.checkbox("I have setup my Pre-requisite and downloaded the necessary files.")
     
     if ready:
-        st.success("Pre-requsite setup complete! You are ready to begin.")
-        if st.button("Proceed to Module 1: Bulk Setup ➡️", use_container_width=True):
+        # We can update session state progress here
+        st.session_state['progress'] = 5 
+        st.success("Pre-requisite setup complete! You are ready to begin.")
+        if st.button("Proceed to Module 1: Bulk Setup →", use_container_width=True):
             st.switch_page("pages/02_Module_1.py")
     else:
         st.warning("Please finalize your pre-requisite before proceeding.")
+
+# --- 9. RENDER SIDEBAR PROGRESS ---
+# Optional: Keeps the progress bar in sync even on sub-pages
+render_sidebar_progress(st.session_state.get('progress', 0))

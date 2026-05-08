@@ -8,14 +8,14 @@ class VolcanoAnalyzer:
 
     def process_screening_data(self, df):
         """Calculates descriptors and applies the -1 multiplier to overpotential."""
-        if 'dG_O' in df.columns and 'dG_OH' in df.columns:
+        if 'ΔG3 (*O)' in df.columns and 'ΔG2 (*OH)' in df.columns:
             # Descriptor: Delta G_O - Delta G_OH
-            df['Descriptor'] = df['dG_O'] - df['dG_OH']
+            df['Descriptor'] = df['ΔG3 (*O)'] - df['ΔG2 (*OH)']
             
-            # If 'eta_exp' is provided by the user, we apply the multiplier for the plot
-            if 'eta_exp' in df.columns:
+            # If 'Overpotential' is provided by the user, we apply the multiplier for the plot
+            if 'Overpotential' in df.columns:
                 # Detail: Multiplying overpotential by -1 for the Volcano visualization
-                df['eta_plot'] = df['eta_exp'] * -1
+                df['eta_plot'] = df['Overpotential'] * -1
         return df
 
     def get_volcano_lines(self, x_range):

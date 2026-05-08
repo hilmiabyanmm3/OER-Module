@@ -5,10 +5,12 @@ import re
 import numpy as np
 import pandas as pd
 from itertools import groupby
+import ase
 from ase import Atom
 from ase.constraints import FixAtoms
 from ase.io import read, write
 from ase.data import atomic_masses, atomic_numbers
+
 
 class AdsorbateGenerator:
     def __init__(self):
@@ -255,9 +257,9 @@ class AdsorbateAnalyzer:
                     break
         
         # 2. Tentukan Terminasi (Atas/Bawah)
-        termination = "unknown"
-        if "/atas/" in lower_path: termination = "atas"
-        elif "/bawah/" in lower_path: termination = "bawah"
+        termination = "unknown"  # lower_path membuat path menjadi huruf kecil semua. Jadi kita bisa mendeteksi "nim" atau "mm" tanpa khawatir tentang kapitalisasi.
+        if "nim" in lower_path: termination = "NiM_termination"
+        elif "mm" in lower_path: termination = "MM_termination"
 
         # 3. Tentukan Site (Contoh: Fe-54)
         site = None
@@ -281,11 +283,16 @@ class AdsorbateAnalyzer:
                     content = z.read(path).decode("utf-8", errors='ignore')
                 except: continue
                 
-                # Ekstrak Total Energy (Ry)
-                match = re.search(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content)
-                if not match: continue
+                # Ekstrak Final energy
+                match_final = re.search(r'(?i)Final\s+energy\s*=\s*([-.\d]+)\s*Ry', content)
                 
-                energy_ry = float(match.group(1))
+                if match_final:
+                    energy_ry = float(match_final.group(1))
+                else:
+                    matches_total = re.findall(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content, re.IGNORECASE)
+                    if matches_total: energy_ry = float(matches_total[-1])
+                    else: continue
+                
                 step, site, term = self._parse_path_info(path)
                 
                 record = {
@@ -345,9 +352,153 @@ class AdsorbateAnalyzer:
             
             for i, col in enumerate(df_exp.columns):
                 # Cari lebar teks maksimum di kolom, atau gunakan panjang header
-                max_len = df_exp[col].astype(str).map(len).max() if not df_exp[col].empty else len(col)
+                lengths = df_exp[col].dropna().astype(str).map(len)
+                max_len = lengths.max() if not lengths.empty else len(col)
                 max_len = max(max_len, len(col))
                 width = min(max_len + 2, 60)
                 ws.set_column(i, i, width, fmt if col == 'Energy (Ry)' else None)
 
+        return output.getvalue()
+    
+    def calculate_adsorption_energies(self, df, isolated_energies_ry):
+        RY_TO_EV = 13.605698066
+        df_clean = df.dropna(subset=['Step', 'Site', 'Energy (Ry)'])
+        
+        # [CLEAN CODE] 1. Pandas Idiom: Ekstrak Slab Energies tanpa perlu for-loop iterrows
+        slabs = dict(df_clean[df_clean['Step'] == 'slab'].set_index('Site')['Energy (Ry)'])
+        
+        # [CLEAN CODE] 2. Map Dictionary: Menggantikan if-elif yang memanjang ke bawah
+        step_map = {'1-h2o': 'H2O', '2-oh': 'OH', '3-o': 'O', '4-ooh': 'OOH'}
+        
+        ads_results = []
+        for _, row in df_clean[df_clean['Step'] != 'slab'].iterrows():
+            step, site, e_sys = row['Step'], row['Site'], row['Energy (Ry)']
+            mol_key = step_map.get(step)
+            
+            # [CLEAN CODE] 3. Guard Clause: Skip data yang cacat secara satu baris
+            if not mol_key or mol_key not in isolated_energies_ry or site not in slabs:
+                continue 
+                
+            e_slab, e_iso = slabs[site], isolated_energies_ry[mol_key]
+            
+            ads_results.append({
+                'Site': site, 'Step': step,
+                'E_sys (Ry)': e_sys, 'E_slab (Ry)': e_slab, 'E_iso (Ry)': e_iso,
+                'E_ads (eV)': (e_sys*RY_TO_EV - e_slab*RY_TO_EV - e_iso*RY_TO_EV)
+            })
+            
+        return pd.DataFrame(ads_results).sort_values(by=['Site', 'Step']) if ads_results else pd.DataFrame()
+
+    def generate_adsorption_excel(self, df_ads, isolated_energies_ry, catalyst_name="Unknown"):
+        """
+        Mengekspor hasil energi adsorpsi ke Excel ke dalam 2 Sheet terpisah:
+        1. Detailed_Data: Energi terisolasi & tabel adsorpsi format vertikal
+        2. Summary: Tabel ringkasan pivoted untuk diplot
+        """
+        output = io.BytesIO()
+        RY_TO_EV = 13.605698066
+        
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            workbook = writer.book
+            
+            # Buat dua sheet terpisah
+            ws_details = workbook.add_worksheet('Detailed_Data')
+            ws_sum = workbook.add_worksheet('Summary')
+            
+            bold = workbook.add_format({'bold': True})
+            float_fmt = workbook.add_format({'num_format': '0.000000'})
+            header_fmt = workbook.add_format({'bold': True, 'bottom': 1})
+            
+            # ==============================================================
+            # SHEET 1: DETAILED DATA
+            # ==============================================================
+            
+            # --- 1. Tulis info Isolated Molecules ---
+            ws_details.write('A1', 'Reference Isolated Molecules', bold)
+            ws_details.write('A2', 'Molecule', bold)
+            ws_details.write('B2', 'Energy (Ry)', bold)
+            ws_details.write('C2', 'Energy (eV)', bold)
+            
+            row_idx = 2
+            for mol, e_ry in isolated_energies_ry.items():
+                ws_details.write(row_idx, 0, mol)
+                ws_details.write(row_idx, 1, e_ry, float_fmt)
+                ws_details.write(row_idx, 2, e_ry * RY_TO_EV, float_fmt)
+                row_idx += 1
+                
+            row_idx += 2 
+            
+            # --- 2. Tulis Tabel Adsorpsi (Format Vertikal Asli) ---
+            if not df_ads.empty:
+                columns = list(df_ads.columns)
+                for col_num, value in enumerate(columns):
+                    ws_details.write(row_idx, col_num, value, header_fmt)
+                row_idx += 1
+                
+                for site_name, group in groupby(df_ads.to_dict('records'), key=lambda x: x['Site']):
+                    for record in group:
+                        for col_num, col_name in enumerate(columns):
+                            val = record[col_name]
+                            if isinstance(val, (int, float)):
+                                ws_details.write(row_idx, col_num, val, float_fmt)
+                            else:
+                                ws_details.write(row_idx, col_num, val if val else "")
+                        row_idx += 1
+                    row_idx += 1 
+            
+            # Set lebar kolom untuk sheet 1
+            ws_details.set_column('A:A', 15)
+            ws_details.set_column('B:G', 20)
+
+            # ==============================================================
+            # SHEET 2: VOLCANO SUMMARY
+            # ==============================================================
+            
+            if not df_ads.empty:
+                # --- 3. [NEW] Tulis Tabel Ringkasan (Pivoted) ---
+                sum_row_idx = 0  # Reset index baris untuk sheet baru
+                ws_sum.write(sum_row_idx, 0, "Summary", bold)
+                sum_row_idx += 2
+                
+                # Gunakan fungsi pivot bawaan Pandas
+                df_pivot = df_ads.pivot(index='Site', columns='Step', values='E_ads (eV)').reset_index()
+                
+                # Ubah nama kolom langkah (1-h2o dsb) menjadi standar Eads_X
+                rename_map = {'1-h2o': 'Eads_H2O', '2-oh': 'Eads_OH', '3-o': 'Eads_O', '4-ooh': 'Eads_OOH'}
+                df_pivot.rename(columns=rename_map, inplace=True)
+                
+                # Pastikan 4 kolom target selalu ada, isi dengan NaN (kosong) jika suatu adsorbat terlewat
+                target_cols = ['Eads_H2O', 'Eads_OH', 'Eads_O', 'Eads_OOH']
+                for col in target_cols:
+                    if col not in df_pivot.columns:
+                        df_pivot[col] = np.nan
+                        
+                # Sisipkan nama katalis ke kolom paling depan
+                df_pivot.insert(0, 'Catalyst', catalyst_name)
+                
+                # Susun ulang urutan kolom
+                final_cols = ['Catalyst', 'Site'] + target_cols
+                df_pivot = df_pivot[final_cols]
+                
+                # Cetak Header Tabel Pivot
+                for col_num, col_name in enumerate(final_cols):
+                    ws_sum.write(sum_row_idx, col_num, col_name, header_fmt)
+                sum_row_idx += 1
+                
+                # Cetak Baris Data Pivot
+                for _, record in df_pivot.iterrows():
+                    for col_num, col_name in enumerate(final_cols):
+                        val = record[col_name]
+                        if pd.isna(val):
+                            ws_sum.write(sum_row_idx, col_num, "")
+                        elif isinstance(val, (int, float)):
+                            ws_sum.write(sum_row_idx, col_num, val, float_fmt)
+                        else:
+                            ws_sum.write(sum_row_idx, col_num, val)
+                    sum_row_idx += 1
+
+                # Set lebar kolom untuk sheet 2
+                ws_sum.set_column('A:F', 20)
+
+        output.seek(0)
         return output.getvalue()

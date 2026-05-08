@@ -1,80 +1,137 @@
 import streamlit as st
-from utils.ui_components import module_header, main_content_text, sub_section_header, highlight_box
+import importlib
 
-# 1. GLOBAL CONFIGURATION
-st.set_page_config(
-    page_title="OER Research Portal | CMD-ITB",
-    page_icon="🧪",
-    layout="wide",
-    initial_sidebar_state="expanded"
+# 1. IMPORT UI COMPONENTS
+from utils.ui_components import (
+    module_header, 
+    main_content_text, 
+    sub_section_header, 
+    highlight_box,
+    inject_global_css,   
+    style_sidebar,      
+    render_sidebar_progress 
 )
 
-# 2. SESSION STATE INITIALIZATION
+# 2. GLOBAL CONFIGURATION
+st.set_page_config(
+    page_title="OER Learning Module | CMD-ITB",
+    # Updated: Branded Blue DNA Icon
+    page_icon="https://img.icons8.com/?size=100&id=vtLGHdmfoSt8&format=png&color=000000", 
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+inject_global_css()
+style_sidebar()
+
+# 3. SESSION STATE INITIALIZATION
 if 'progress' not in st.session_state:
     st.session_state['progress'] = 0
 
-# 3. MAIN UI LAYOUT
-left, mid, right = st.columns([1, 4, 1])
-
-with mid:
-    module_header("HOME", "OER Research Module", "Theoretical & Computational Learning Path")
-
-    main_content_text("""
-        The <b>Oxygen Evolution Reaction (OER)</b> is a flagship computational-material 
-        research topic at <b>CMD-ITB</b>. This course bridges the gap between 
-        theoretical surface science and high-fidelity computational modeling.
-    """)
+# 4. DEFINE PAGE FUNCTIONS
+def show_home():
+    """Renders the landing page with a tighter top margin and snappier animation."""
     
-    sub_section_header("Why OER?", emoji="🔬")
-    st.success("""
-    - **Experimentalists:** Deepen your understanding of atomic physics and reaction intermediates.
-    - **Computationalists:** Master a rigorous, publication-ready workflow for catalytic systems.
-    - **Enthusiasts:** Explore material science from first-principles theory to actionable insights.
-    """)
+    # 1. INJECT TUNED CSS
+    st.markdown("""
+        <style>
+            /* Refined Typing Animation: 2s duration, 15 steps */
+            @keyframes typing { from { width: 0 } to { width: 100% } }
+            @keyframes blink-caret { from, to { border-color: transparent } 50% { border-color: #007BFF; } }
 
-    st.divider()
+            .typewriter h1 {
+              color: #1a1c1e;
+              font-family: 'Inter', sans-serif;
+              overflow: hidden;
+              border-right: .15em solid #007BFF;
+              white-space: nowrap;
+              margin: 0 auto;
+              letter-spacing: -0.04em;
+              animation: typing 2s steps(15, end), blink-caret .75s step-end infinite;
+              font-size: 3.5rem;
+              font-weight: 800;
+            }
 
-    # Learning Outcomes
-    sub_section_header("What you can get from this module", emoji="🎁")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        main_content_text("🚀 <b>Express Learning:</b> Master a 12-month workflow in just 12 hours.")
-        main_content_text("📊 <b>Tool Proficiency:</b> Expert use of VASP, ASE, and Quantum Espresso.")
-    with col_b:
-        main_content_text("🎓 <b>Full Research Cycle:</b> Complete an end-to-end project across 7 modules.")
-        main_content_text("🗣️ <b>2-Way Mentorship:</b> Direct consultation with lab instructors.")
+            /* The Adjusted Container */
+            .main-hero {
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-start; /* Pulls content toward the top */
+                align-items: center;        /* Keeps it horizontally centered */
+                padding-top: 8vh;           /* Adjust this value to move text higher or lower */
+                min-height: 45vh;           /* Reduced container height */
+                text-align: center;
+            }
+            
+            .hero-subtitle {
+                font-size: 1.25rem; 
+                color: #6c757d; 
+                margin-top: 15px; 
+                margin-bottom: 35px; 
+                line-height: 1.6;
+                max-width: 600px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
 
-    st.divider()
+    # 2. RENDER THE HERO
+    st.markdown("""
+        <div class="main-hero">
+            <div style="margin-bottom: 20px;">
+                <i class="fa-solid fa-microscope" style="color: #007BFF; font-size: 4rem; opacity: 0.9;"></i>
+            </div>
+            <div class="typewriter">
+                <h1>OER Learning Module</h1>
+            </div>
+            <p class="hero-subtitle">
+                The flagship computational-material research module at <b>CMD-ITB</b>.<br>
+                Bridging theoretical surface science with high-fidelity modeling.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
 
-    # NEW UPDATED MODULE STRUCTURE
-    sub_section_header("Course Curriculum", emoji="📑")
-    
-    # Using columns to show a clean curriculum map
-    cur1, cur2 = st.columns(2)
-    with cur1:
-        st.markdown("""
-        **Phase 1: Material Foundations**
-        * **Module 1:** Bulk Selection & Variation
-        * **Module 2:** Slab Optimization & Surface Energy
-        * **Module 3:** Adsorbate Modeling & ZPE
-        """)
-    with cur2:
-        st.markdown("""
-        **Phase 2: Thermodynamic & Kinetic Insights**
-        * **Module 4:** Gibbs Free Energy Landscape
-        * **Module 5:** Overpotential Analysis
-        * **Module 6:** Microkinetic Modeling
-        * **Module 7:** Data Visualization - Volcano Graphs
-        """)
+    # 3. ACTION BUTTONS
+    _, btn_mid, _ = st.columns([1, 2, 1])
+    with btn_mid:
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button("Start Workflow →", type="primary", use_container_width=True):
+                st.switch_page("pages/01_Pre-requisite.py")
+        with btn_col2:
+            st.link_button(
+                "Star on GitHub", 
+                "https://github.com/hilmiabyanmm3/OER-Module", 
+                use_container_width=True
+            )
 
-    # Call to Action
-    st.divider()
-    highlight_box("Ready to transform your understanding of atomic surface science?", type="success")
-    
-    if st.button("Start Pre-requisite ➡️", use_container_width=True):
-        st.switch_page("pages/01_Pre-requisite.py")
+    # 4. FOOTER
+    st.markdown("""
+        <div style="text-align: center; margin-top: 40px; padding: 20px; border-top: 1px solid #f0f2f6;">
+            <p style="font-size: 0.85rem; color: #adb5bd;">
+                © 2026 Computational Materials Design Lab - ITB
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
 
-# 4. SIDEBAR PROGRESS
-st.sidebar.header("Overall Progress")
-st.sidebar.progress(st.session_state['progress'])
-st.sidebar.info("Begin with Module 1 to establish your Bulk model.")
+# 5. DEFINE NAVIGATION STRUCTURE
+home_page = st.Page(show_home, title="Home", default=True)
+pre_req   = st.Page("pages/01_Pre-requisite.py", title="Pre-requisite")
+intro     = st.Page("pages/00_Introduction.py", title ="Introduction")
+mod1      = st.Page("pages/02_Module_1.py", title="Module 1: Bulk")
+mod2      = st.Page("pages/03_Module_2.py", title="Module 2: Surface")
+mod3      = st.Page("pages/04_Module_3.py", title="Module 3: Adsorbate")
+mod4      = st.Page("pages/05_Module_4.py", title="Module 4: Vibration")
+mod5      = st.Page("pages/06_Module_5.py", title="Module 5: Gibbs Free Energy")
+mod6      = st.Page("pages/07_Module_6.py", title="Module 6: Microkinetic")
+mod7      = st.Page("pages/08_Module_7.py", title="Module 7: Volcano Graphs")
+
+pg = st.navigation({
+    "Portal": [home_page, intro, pre_req],
+    "OER Modeling Modules": [mod1, mod2, mod3, mod4, mod5, mod6, mod7]
+})
+
+# 6. RENDER SIDEBAR PROGRESS
+render_sidebar_progress(st.session_state['progress'])
+
+# 7. RUN NAVIGATION
+pg.run()

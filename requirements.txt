@@ -5,7 +5,7 @@ streamlit
 pandas
 numpy
 scipy
-
+sympy
 # Visualization
 plotly
 matplotlib

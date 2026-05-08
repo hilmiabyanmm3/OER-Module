@@ -5,20 +5,34 @@ from matplotlib.gridspec import GridSpec
 import numpy as np
 import pandas as pd
 import io
+from utils.ui_components import (
+    module_header, 
+    main_content_text, 
+    sub_section_header, 
+    highlight_box,
+    inject_global_css,   
+    style_sidebar,      
+    render_sidebar_progress 
+)
+
+#
+# --- 1. GLOBAL STYLING & CONFIG ---
+st.set_page_config(
+    page_title="Module 6: Kinetics | CMD-ITB", 
+    layout="wide"
+)
+inject_global_css()
+style_sidebar()
 
 # 1. DYNAMIC IMPORT
-module_logic = importlib.import_module("utils.07_Module_6")
-OERKineticModel = module_logic.OERKineticModel
-
-st.set_page_config(page_title="Module 6: Kinetics", layout="wide")
+try:
+    module_logic = importlib.import_module("utils.07_Module_6")
+    OERKineticModel = module_logic.OERKineticModel
+except Exception as e:
+    st.error(f"Logic Module Error: {e}")
 
 # --- NAVIGATION HEADER ---
-st.title("07 | Module 6: OER Kinetics")
-col_nav, _ = st.columns([1, 5])
-with col_nav:
-    if st.button("⬅️ Back to Module 5"):
-        st.switch_page("pages/06_Module_5.py")
-st.divider()
+module_header("06", "OER Kinetics Simulation", "Modeling reaction kinetics based on Gibbs free energy inputs")  
 
 st.subheader("Kinetics Dashboard")
 
@@ -98,5 +112,18 @@ if st.button("Run Kinetics Simulation", type="primary", use_container_width=True
 
 # --- FOOTER ---
 st.divider()
-if st.button("Complete Module 6 🚀"):
-    st.switch_page("pages/08_Module_7.py")
+
+col_b, col_n = st.columns([1, 4])
+
+with col_b:
+    # Standard Typographic Back Arrow
+    if st.button("← Back"):
+        st.switch_page("pages/06_Module_5.py")
+
+with col_n:
+    # Standard Typographic Forward Arrow with Primary Styling
+    if st.button("Complete Module 6 →", type="primary", use_container_width=True):
+        st.switch_page("pages/08_Module_7.py")
+
+# Ensure Sidebar remains consistent
+render_sidebar_progress(st.session_state.get('progress', 65))
