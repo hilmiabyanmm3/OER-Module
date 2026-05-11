@@ -79,6 +79,11 @@ with tab1:
                 sc_y = col2.number_input("Y Repeat", 1, 5, 1)
                 sc_z = col3.number_input("Z Repeat", 1, 5, 1)
 
+                k_col1, k_col2, k_col3 = st.columns(3)
+                k_x = k_col1.number_input("Kx", 1, 20, 4)
+                k_y = k_col2.number_input("Ky", 1, 20, 4)
+                k_z = k_col3.number_input("Kz", 1, 20, 1) # Usually 1 for slabs
+
                 # Fraction of the top layer to remain mobile
                 free_choice = st.selectbox(
                     "Portion of top atoms to remain FREE (not fixed)",
@@ -92,7 +97,7 @@ with tab1:
                     with st.spinner("Cutting slab and applying constraints..."):
                         # Calculate results and store in session state
                         zip_bytes, preview = generator.process_and_zip(
-                            miller, layers, vacuum, [sc_x, sc_y, sc_z], free_choice
+                            miller, layers, vacuum, [sc_x, sc_y, sc_z], kpts=[k_x, k_y, k_z], free_fraction=free_choice
                         )
                         st.session_state.slab_results = (zip_bytes, preview)
         
@@ -140,7 +145,7 @@ with tab2:
                 results = analyzer.process_slab_zip(slabs_zip.getvalue())
                 if results:
                     df = pd.DataFrame(results)
-                    st.dataframe(df.style.format("{:.4f}", subset=["Gamma (J/m²)", "Gamma (eV/Å²)"]), use_container_width=True)
+                    st.dataframe(df.style.format("{:.4f}", subset=["Surface Energy (J/m²)", "Surface Energy (eV/Å²)"]), use_container_width=True)
                     # Updated: Professional download style
                     st.download_button("Download Excel Report ↓", analyzer.generate_excel(results), "surface_energies.xlsx", use_container_width=True)
                 else:
