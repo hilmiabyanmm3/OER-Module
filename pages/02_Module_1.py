@@ -36,9 +36,9 @@ step1, step2, step3 = st.tabs(["Step 1: Bulk Prep", "Step 2: Variation", "Step 3
 with step1:
     st.subheader("Structure & Template Setup")
     st.write(""
-    "* Upload your bulk structure file (.cif / .vasp) downloaded from Materials Project \n"
-    "* Upload template input file (.in) for Quantum ESPRESSO with the desired calculation settings \n" 
-    "* Specify k-points grid for DFT calculations (e.g. 6x6x3) \n"
+    "* Upload your bulk structure file (.cif / .vasp) downloaded from Materials Project. \n"
+    "* Upload template input file (.in) for Quantum ESPRESSO with the desired calculation settings. \n" 
+    "* Specify k-points grid for DFT calculations (e.g. 6x6x3). \n"
     "* Click 'Generate Files' to create bulk structure input files ready for DFT calculations. \n")
 
     col1, col2 = st.columns(2)

@@ -10,6 +10,8 @@ from ase import Atom
 from ase.constraints import FixAtoms
 from ase.io import read, write
 from ase.data import atomic_masses, atomic_numbers
+# Add at the top of 04_Module_3.py
+import os
 
 
 class AdsorbateGenerator:
@@ -42,82 +44,85 @@ class AdsorbateGenerator:
         }
 
     def load_slab(self, uploaded_zip_bytes):
-        """Extracts slab structure and template from an uploaded ZIP containing PW.in and PW.out."""
+        self.slabs_data = []
         try:
             with zipfile.ZipFile(io.BytesIO(uploaded_zip_bytes), 'r') as z:
                 filenames = z.namelist()
-                out_files = [f for f in filenames if f.endswith('.out') or f.endswith('.log')]
-                in_files = [f for f in filenames if f.endswith('.in')]
-                
-                if not out_files: return False
-                
-                # Baca file .out untuk geometri final
-                out_content = z.read(out_files[0]).decode('utf-8', errors='ignore')
-                f = io.StringIO(out_content)
-                self.base_atoms = read(f, format='espresso-out', index='-1')
-                
-                # Baca file .in untuk dijadikan template
-                if in_files:
-                    in_content = z.read(in_files[0]).decode('utf-8', errors='ignore')
-                    lines = in_content.split('\n')
-                    cell_lines = []
-                    in_cell = False
-                    for line in lines:
-                        if re.match(r'(?i)^\s*CELL_PARAMETERS', line):
-                            in_cell = True
-                            cell_lines.append(line.strip())
-                            continue
-                        if in_cell:
-                            # Berhenti jika menabrak awal blok/cards baru
-                            if re.match(r'(?i)^\s*(ATOMIC_SPECIES|K_POINTS|ATOMIC_POSITIONS)', line):
-                                break
-                            if line.strip():
-                                cell_lines.append(line.strip())
-                    
-                    self.base_cell_str = "\n" + "\n".join(cell_lines) + "\n"
-                    
-                    try:
-                        atoms_in = read(io.StringIO(in_content), format='espresso-in')
-                        if atoms_in.cell:
-                            self.base_atoms.set_cell(atoms_in.get_cell())
-                            self.base_atoms.set_pbc(True)
-                    except:
-                        pass
-                    
-                    cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
-                    self.base_template = cards_pattern.split(in_content)[0].strip()
-                    self.base_template = re.sub(r"(?i)(pseudo_dir\s*=\s*)['\"].*?['\"]", r"\g<1>'~/PSEUDO'", self.base_template)
-                else:
-                    self.base_template = "&CONTROL\n   pseudo_dir = '~/PSEUDO'\n/\n&SYSTEM\n/\n"
-                    self.base_cell_str = "\n" # Kosong jika tidak ada file in
-                
-            # Tentukan indeks atom yang difiksasi (bawah 66%)
-            z_coords = self.base_atoms.positions[:, 2]
-            min_z, max_z = np.min(z_coords), np.max(z_coords)
-            cutoff = min_z + (max_z - min_z) * 0.66
-            self.slab_fixed_indices = [i for i, z in enumerate(z_coords) if z <= cutoff]
-            return True
-            
+                out_files = [
+                    f for f in filenames
+                    if (f.endswith('.out') or f.endswith('.log'))
+                    and not f.startswith('__MACOSX')
+                ]
+                if not out_files:
+                    return False
+
+                for out_file in out_files:
+                    folder_path = os.path.dirname(out_file)  # e.g. "slab-NiFePO-MM"
+
+                    out_content = z.read(out_file).decode('utf-8', errors='ignore')
+                    atoms = read(io.StringIO(out_content), format='espresso-out', index='-1')
+
+                    # Find matching .in file in the same folder
+                    in_files = [
+                        f for f in filenames
+                        if os.path.dirname(f) == folder_path and f.endswith('.in')
+                    ]
+
+                    base_template = "&CONTROL\n   pseudo_dir = '~/PSEUDO'\n/\n&SYSTEM\n/\n"
+                    base_cell_str = "\n"
+
+                    if in_files:
+                        in_content = z.read(in_files[0]).decode('utf-8', errors='ignore')
+
+                        # Extract CELL_PARAMETERS block
+                        cell_match = re.search(
+                            r'(?i)(CELL_PARAMETERS.*?)(?=ATOMIC_SPECIES|K_POINTS|ATOMIC_POSITIONS|$)',
+                            in_content, re.DOTALL
+                        )
+                        if cell_match:
+                            base_cell_str = "\n" + cell_match.group(1).strip() + "\n"
+
+                        cards_pattern = re.compile(
+                            r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)'
+                        )
+                        base_template = cards_pattern.split(in_content)[0].strip()
+                        base_template = re.sub(
+                            r"(?i)(pseudo_dir\s*=\s*)['\"].*?['\"]",
+                            r"\g<1>'~/PSEUDO'", base_template
+                        )
+
+                    # Fixed indices: bottom 66% of z-range
+                    z_coords = atoms.positions[:, 2]
+                    min_z, max_z = z_coords.min(), z_coords.max()
+                    cutoff = min_z + (max_z - min_z) * 0.66
+                    fixed_indices = [i for i, z_val in enumerate(z_coords) if z_val <= cutoff]
+
+                    self.slabs_data.append({
+                        'atoms': atoms,
+                        'template': base_template,
+                        'cell_str': base_cell_str,
+                        'fixed_indices': fixed_indices,
+                        'folder': folder_path,   # "slab-NiFePO-MM"
+                    })
+
+            return bool(self.slabs_data)
+
         except Exception as e:
             print(f"Error loading ZIP: {e}")
             return False
 
-    def find_top_sites(self, symbols, n_total):
-        if not self.base_atoms:
-            return []
-
-        eligible_atoms = []
-        for atom in self.base_atoms:
+    def find_top_sites(self, atoms, symbols, n_total):
+        eligible = []
+        for atom in atoms:
             if atom.symbol in symbols:
-                eligible_atoms.append({
+                eligible.append({
                     'symbol': atom.symbol,
                     'z_coord': atom.position[2],
-                    'index_ase': atom.index,     
-                    'index_qe': atom.index + 1,  
-                    'position': atom.position
+                    'index_ase': atom.index,
+                    'index_qe': atom.index + 1,
+                    'position': atom.position,
                 })
-
-        sorted_atoms = sorted(eligible_atoms, key=lambda x: x['z_coord'], reverse=True)
+        sorted_atoms = sorted(eligible, key=lambda x: x['z_coord'], reverse=True)
         return sorted_atoms[:n_total]
     
     def build_adsorbates_zip(self, selected_sites, reaction_package="OER", custom_variants=None):
@@ -145,87 +150,82 @@ class AdsorbateGenerator:
         else:
             variants = {"1-ads": ["O"]} 
 
-        lattice_y = self.base_atoms.cell.lengths()[1]
+        # lattice_y = self.base_atoms.cell.lengths()[1]
         metals_list = ['Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt', 'Ag', 'Au', 'Ru', 'Rh', 'Ir', 'Os', 'V', 'Cr', 'Ti', 'Sc', 'Zn']
         
         with zipfile.ZipFile(output_buffer, 'w') as zf:
-            for site in selected_sites:
-                ref_pos = self.base_atoms[site['index_ase']].position
-                site_name = f"{site['symbol']}-{site['index_qe']}"
-                
-                active_offsets = self.offsets_A if ref_pos[1] > 0.5 * lattice_y else self.offsets_B
-                
-                for folder, ads_list in variants.items():
-                    for ads_type in ads_list:
-                        new_atoms = self.base_atoms.copy()
-                        
-                        if ads_type in active_offsets:
-                            for elem, dx, dy, dz in active_offsets[ads_type]:
-                                new_pos = [ref_pos[0] + dx, ref_pos[1] + dy, ref_pos[2] + dz]
-                                new_atoms.append(Atom(elem, position=new_pos))
-                        else:
-                            print(f"Warning: Offset for '{ads_type}' not found!")
-                            continue 
-                        
-                        if self.slab_fixed_indices:
-                            c = FixAtoms(indices=self.slab_fixed_indices)
-                            new_atoms.set_constraint(c)
-                        
-                        # --- 1. BERSIHKAN TEMPLATE ---
-                        unique_elements = list(set(new_atoms.get_chemical_symbols()))
-                        ntyp_new = len(unique_elements)
-                        
-                        cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
-                        template_clean = cards_pattern.split(self.base_template)[0].strip()
-                        
-                        # Hapus starting_magnetization lama
-                        template_clean = re.sub(r'(?i)starting_magnetization\(\d+\)\s*=\s*[\d\.\-]+[\n\r]*', '', template_clean)
-                        
-                        # Update nat dan ntyp
-                        template_clean = re.sub(r'(?i)(nat\s*=\s*)\d+', r'\g<1>' + str(len(new_atoms)), template_clean)
-                        template_clean = re.sub(r'(?i)(ntyp\s*=\s*)\d+', r'\g<1>' + str(ntyp_new), template_clean)
-                        
-                        # --- 2. BANGUN ATOMIC_SPECIES & MAGNETIZATION ---
-                        new_species_str = "\n\nATOMIC_SPECIES\n"
-                        mag_str = ""
-                        
-                        for i, el in enumerate(unique_elements, 1):
-                            mass = atomic_masses[atomic_numbers[el]]
-                            pseudo = pseudo_map.get(el, f"{el}.UPF")
-                            new_species_str += f"  {el}  {mass:.3f}  {pseudo}\n"
-                            
-                            mag_val = 1.0 if el in metals_list else 0.0
-                            mag_str += f"   starting_magnetization({i}) = {mag_val}\n"
+            for slab_idx, slab in enumerate(self.slabs_data):
+                atoms       = slab['atoms']
+                template    = slab['template']
+                cell_str    = slab['cell_str']
+                fixed_idx   = slab['fixed_indices']
+                folder      = slab['folder']           # root: "slab-NiFePO-MM"
+                lattice_y   = atoms.cell.lengths()[1]
+                sites       = selected_sites.get(slab_idx, [])
 
-                        system_match = re.search(r'(?i)(&SYSTEM.*?)(/)', template_clean, flags=re.DOTALL)
-                        if system_match:
-                            new_system = system_match.group(1) + mag_str + system_match.group(2)
-                            template_clean = template_clean.replace(system_match.group(0), new_system)
-                        
-                        # Tambahkan dipole correction
-                        if 'dipfield' not in template_clean.lower():
-                            template_clean = re.sub(r'(?i)(&CONTROL)', r'\1\n   dipfield = .true.\n   tefield = .true.', template_clean, count=1)
-                        if 'edir' not in template_clean.lower():
-                            template_clean = re.sub(r'(?i)(&SYSTEM)', r'\1\n edir = 3\n   emaxpos = 0.75\n   eamp = 0.001', template_clean, count=1)
-                        
-                        # --- 3. BANGUN BLOK KOORDINAT & GABUNGKAN ---
-                        pos_str = "\nATOMIC_POSITIONS angstrom\n"
-                        for i, atom in enumerate(new_atoms):
-                            fix_flag = "0 0 0" if i in self.slab_fixed_indices else ""
-                            pos_str += f"{atom.symbol}  {atom.position[0]:.10f} {atom.position[1]:.10f} {atom.position[2]:.10f}  {fix_flag}\n"
-                        
-                        # Tambahkan K_POINTS (Gamma point by default untuk adsorbat)
-                        kpoints_str = "\nK_POINTS gamma\n"
-                        
-                        # GABUNGKAN SEMUA DENGAN CELL DARI PW.IN ASLI
-                        final_in = template_clean + new_species_str + kpoints_str + self.base_cell_str + pos_str
-                        
-                        v_buf = io.StringIO()
-                        write(v_buf, new_atoms, format='vasp') 
-                        path = f"{folder}/{site_name}/{ads_type}" if len(ads_list) > 1 else f"{folder}/{site_name}"
-                        zf.writestr(f"{path}/input.vasp", v_buf.getvalue())
-                        zf.writestr(f"{path}/PW.in", final_in)
-        
+                for site in sites:
+                    ref_pos   = atoms[site['index_ase']].position
+                    site_name = f"{site['symbol']}-{site['index_qe']}"
+                    active_offsets = self.offsets_A if ref_pos[1] > 0.5 * lattice_y else self.offsets_B
+
+                    for step_folder, ads_list in variants.items():
+                        for ads_type in ads_list:
+                            new_atoms = atoms.copy()
+                            if ads_type in active_offsets:
+                                for elem, dx, dy, dz in active_offsets[ads_type]:
+                                    new_pos = [ref_pos[0]+dx, ref_pos[1]+dy, ref_pos[2]+dz]
+                                    new_atoms.append(Atom(elem, position=new_pos))
+                            else:
+                                print(f"Warning: offset for '{ads_type}' not found, skipping.")
+                                continue
+
+                            # --- Build PW.in (same logic as original, using per-slab template) ---
+                            unique_elements = list(set(new_atoms.get_chemical_symbols()))
+                            ntyp_new = len(unique_elements)
+                            cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
+                            template_clean = cards_pattern.split(template)[0].strip()
+                            template_clean = re.sub(r'(?i)starting_magnetization\(\d+\)\s*=\s*[\d\.\-]+[\n\r]*', '', template_clean)
+                            template_clean = re.sub(r'(?i)(nat\s*=\s*)\d+',  r'\g<1>' + str(len(new_atoms)),  template_clean)
+                            template_clean = re.sub(r'(?i)(ntyp\s*=\s*)\d+', r'\g<1>' + str(ntyp_new), template_clean)
+
+                            new_species_str = "\n\nATOMIC_SPECIES\n"
+                            mag_str = ""
+                            for i, el in enumerate(unique_elements, 1):
+                                mass   = atomic_masses[atomic_numbers[el]]
+                                pseudo = pseudo_map.get(el, f"{el}.UPF")
+                                new_species_str += f"  {el}  {mass:.3f}  {pseudo}\n"
+                                mag_val = 1.0 if el in metals_list else 0.0
+                                mag_str += f"   starting_magnetization({i}) = {mag_val}\n"
+
+                            system_match = re.search(r'(?i)(&SYSTEM.*?)(/)', template_clean, re.DOTALL)
+                            if system_match:
+                                new_system = system_match.group(1) + mag_str + system_match.group(2)
+                                template_clean = template_clean.replace(system_match.group(0), new_system)
+
+                            if 'dipfield' not in template_clean.lower():
+                                template_clean = re.sub(r'(?i)(&CONTROL)', r'\1\n   dipfield = .true.\n   tefield = .true.', template_clean, count=1)
+                            if 'edir' not in template_clean.lower():
+                                template_clean = re.sub(r'(?i)(&SYSTEM)', r'\1\n   edir = 3\n   emaxpos = 0.75\n   eamp = 0.001', template_clean, count=1)
+
+                            pos_str = "\nATOMIC_POSITIONS angstrom\n"
+                            for i, atom in enumerate(new_atoms):
+                                fix_flag = "0 0 0" if i in fixed_idx else ""
+                                pos_str += f"{atom.symbol}  {atom.position[0]:.10f} {atom.position[1]:.10f} {atom.position[2]:.10f}  {fix_flag}\n"
+
+                            kpoints_str = "\nK_POINTS gamma\n"
+                            final_in = template_clean + new_species_str + kpoints_str + cell_str + pos_str
+
+                            # --- Path: folder/site/step[/ads_type if multiple] ---
+                            if len(ads_list) > 1:
+                                path = f"{folder}/{site_name}/{step_folder}/{ads_type}"
+                            else:
+                                path = f"{folder}/{site_name}/{step_folder}"
+
+                            v_buf = io.StringIO()
+                            write(v_buf, new_atoms, format='vasp')
+                            zf.writestr(f"{path}/PW.in", final_in)
+                            zf.writestr(f"{path}/input.vasp", v_buf.getvalue())
+            
         output_buffer.seek(0)
         return output_buffer.getvalue()
     
