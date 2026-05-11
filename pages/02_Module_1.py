@@ -161,6 +161,8 @@ with step2:
 
 with step3:
     st.subheader("Results Extraction")
+    st.write("* Upload zip file containing .out files from Quantum ESPRESSO calculations. \n"
+             "* Click 'Extract & Sort Energies' to display a table of energies sorted by the relative energy. \n")
     out_zip = st.file_uploader("Upload .out ZIP", type=["zip"])
     
     if out_zip and st.button("Extract & Sort Energies", type="primary", use_container_width=True):

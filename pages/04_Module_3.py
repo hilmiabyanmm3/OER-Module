@@ -39,7 +39,13 @@ tab1, tab2 = st.tabs(["Step 1: Site Selection", "Step 2: Energy Analysis"])
 
 with tab1:
     st.subheader("Structure Setup")
-    st.write("Upload a ZIP file containing your relaxed slab files (PW.in and PW.out) from Module 2.")
+    st.write("* Upload a zip file containing your relaxed slab (PW.in and PW.out). \n"
+             "* Select elements for prospective active sites. \n"
+             "* Specify how many top atoms to include. \n"
+             "* Click 'Find Top Sites' to identify potential active sites based on Z-coordinates. \n"
+             "* Select the site to which you want to add the adsorbate. \n"
+             "* Choose a reaction package or define custom reactions. \n"
+             "* Click 'Generate Adsorbate Structures'. \n")
 
     uploaded_slab_zip = st.file_uploader("Upload Relaxed Slab ZIP", type=["zip"], key="slab_uploader")
 
@@ -124,7 +130,9 @@ with tab1:
 
 with tab2:
     st.subheader("Results Analysis")
-    st.write("Upload the ZIP file containing your optimized reaction intermediate results (.out files).")
+    st.write("* Upload the zip file containing your optimized reaction intermediate results (.out files). \n"
+             "* Specify the reference energies for isolated molecules (H2O, OH, O, OOH) in Rydberg (Ry). \n"
+             "* Click 'Extract & Calculate Energies' to display the final energies and adsorption energies in tables. \n")
 
     if 'ads_analyzer' not in st.session_state:
         st.session_state.ads_analyzer = module_logic.AdsorbateAnalyzer()
