@@ -171,6 +171,12 @@ with tab2:
         "* Click 'Extract & Calculate Energies' to display the final energies and adsorption energies in tables. \n"
     )
 
+    with st.expander("📂 View Required Folder Structure"):
+            st.write("Make sure your zip file has the folder structure shown below:")
+            # Sesuaikan string path di bawah dengan lokasi file gambar Bapak disimpan
+            # Misal: "assets/folder_tree.png" jika ada di dalam folder assets
+            st.image("assets/folder_tree.png")
+
     if 'ads_analyzer' not in st.session_state:
         st.session_state.ads_analyzer = module_logic.AdsorbateAnalyzer()
 
@@ -216,23 +222,23 @@ with tab2:
             )
 
             # --- TABLES ---
-            c1, c2 = st.columns(2)
-            c1.write("**Final Energies (Ry)**")
-            c1.dataframe(
-                df_results.dropna(subset=['Path'])[['Step', 'Site', 'Energy (Ry)']
-                    ].style.format({"Energy (Ry)": "{:.6f}"}),
-                use_container_width=True
-            )
+            # c1, c2 = st.columns(2)
+            # c1.write("**Final Energies (Ry)**")
+            # c1.dataframe(
+            #     df_results.dropna(subset=['Path'])[['Step', 'Site', 'Energy (Ry)']
+            #         ].style.format({"Energy (Ry)": "{:.6f}"}),
+            #     use_container_width=True
+            # )
 
-            c2.write("**Adsorption Energies (eV)**")
+            st.write("**Adsorption Energies (eV)**")
             if not df_ads.empty:
-                c2.dataframe(
+                st.dataframe(
                     df_ads[['Step', 'Site', 'E_ads (eV)']
                         ].style.format({"E_ads (eV)": "{:.3f}"}),
                     use_container_width=True
                 )
             else:
-                c2.warning("No adsorption data generated. Ensure 'slab' folder exists in results ZIP.")
+                st.warning("No adsorption data generated. Ensure 'slab' folder exists in results ZIP.")
 
             # --- DOWNLOAD BUTTONS ---
             dl1, dl2 = st.columns(2)

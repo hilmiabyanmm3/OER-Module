@@ -106,13 +106,13 @@ with tab1:
 
     # 4. Output Display
     if st.session_state.slab_results:
-        st.divider()
         zip_bytes, preview = st.session_state.slab_results
         
         st.success(f"Slab Generated Successfully! {preview['fixed_info']}")
         
         # Display the QE input header and coordinate preview
-        st.text_area("Preview Generated QE Input (.in):", preview['top_pw_in'], height=300)
+        with st.expander("Preview PW.in"):
+                st.code(preview['top_pw_in'], language='fortran')
         
         # Updated: Professional download style
         st.download_button(
