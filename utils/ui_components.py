@@ -154,3 +154,31 @@ def render_sidebar_progress(progress_value):
                 </div>
             </div>
         """, unsafe_allow_html=True)
+
+def learning_objectives(objectives_list):
+    """
+    Renders a styled card for learning objectives with bullseye and checkmark icons.
+    """
+    # Rapatkan HTML untuk list item
+    items_html = "".join([
+        f'<div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px;">'
+        f'<i class="fa-solid fa-check" style="color: #28a745; margin-top: 4px; font-size: 0.9rem;"></i>'
+        f'<span style="color: #495057; font-size: 1rem; line-height: 1.5;">{obj}</span>'
+        f'</div>' for obj in objectives_list
+    ])
+
+    # Rapatkan HTML utama ke margin kiri agar terhindar dari Markdown parser error
+    html_string = f"""
+<div style="background-color: #f8fbff; padding: 24px; border-radius: 12px; border: 1px solid #e1e8f0; border-left: 6px solid #007BFF; margin: 20px 0 30px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 18px;">
+        <i class="fa-solid fa-bullseye" style="color: #007BFF; font-size: 1.4rem;"></i>
+        <h3 style="margin: 0; color: #1a1c1e; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em;">
+            Learning Objectives
+        </h3>
+    </div>
+    <div style="padding-left: 4px;">
+        {items_html}
+    </div>
+</div>
+"""
+    st.markdown(html_string, unsafe_allow_html=True)

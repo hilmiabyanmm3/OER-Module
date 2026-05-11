@@ -1,5 +1,11 @@
 import streamlit as st
-from utils.ui_components import module_header, main_content_text, sub_section_header, highlight_box
+from utils.ui_components import (
+    module_header, 
+    main_content_text, 
+    sub_section_header, 
+    highlight_box, 
+    learning_objectives
+)
 
 # --- 1. LAYOUT SETUP ---
 left, mid, right = st.columns([1, 4, 1])
@@ -42,26 +48,24 @@ with mid:
                 <i class="fa-solid fa-book-bookmark" style="color: #007BFF; font-size: 1.1rem;"></i>
                 <span style="font-weight: 700; color: #1a1c1e;">Glossary of Technical Terms</span>
             </div>
+                    
+            * **Electrolysis:** The process of using electricity to drive a non-spontaneous chemical reaction.
+            * **OER (Anode):** The oxidation of water to produce oxygen gas.
+            * **HER (Cathode):** The reduction of protons/water to produce hydrogen gas.
+            * **Reaction Potential:** The theoretical voltage required for the reaction (1.23V for water splitting).
+            * **Overpotential ($\eta$):** The extra voltage required beyond the theoretical value to drive the reaction at a specific rate.
         """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    * **Electrolysis:** The process of using electricity to drive a non-spontaneous chemical reaction.
-    * **OER (Anode):** The oxidation of water to produce oxygen gas.
-    * **HER (Cathode):** The reduction of protons/water to produce hydrogen gas.
-    * **Reaction Potential:** The theoretical voltage required for the reaction (1.23V for water splitting).
-    * **Overpotential ($\eta$):** The extra voltage required beyond the theoretical value to drive the reaction at a specific rate.
-    """)
 
     # --- 5. COMPUTATIONAL DETAILS & WORKFLOW ---
     st.divider()
     # Updated: Gear icon for Strategy
     sub_section_header("Computational Strategy", icon_class="fa-solid fa-gears")
-    st.write("**Target Material:** Nickel Phosphate ($Ni_2P_2O_7$)")
+    st.write("**Target Material:** Nickel phosphate $[Ni_3(PO_4)_2]$ and nickel iron phosphate $[Ni_3Fe_3(PO_4)_4]$.")
     
     learning_objectives([
-        "Phase 1 (Mod 1-2): Building and optimizing the Bulk and Slab models.",
-        "Phase 2 (Mod 3-5): Calculating Adsorption, ZPE, and the Overpotential.",
-        "Phase 3 (Mod 6-7): Moving to Kinetics and final Volcano Visualization."
+        "Phase 1 (Module 1-2): Building and optimizing the Bulk and Slab models.",
+        "Phase 2 (Module 3-5): Calculating Adsorption, ZPE, and the Overpotential.",
+        "Phase 3 (Module 6-7): Moving to Kinetics and final Volcano Visualization."
     ])
 
     # --- 6. DATA & ANALYSIS ---
@@ -77,7 +81,7 @@ with mid:
         st.markdown("<i class='fa-solid fa-bullseye' style='color:#007BFF;'></i> *Overall performance metric*", unsafe_allow_html=True)
     with col_img3:
         st.caption("Microkinetic Model")
-        st.markdown("<i class='fa-solid fa-stopwatch' style='color:#007BFF;'></i> *Reaction rates and flux*", unsafe_allow_html=True)
+        st.markdown("<i class='fa-solid fa-stopwatch' style='color:#007BFF;'></i> *Reaction rates and turnover frequencies*", unsafe_allow_html=True)
 
     # --- 7. EXPERIMENT VS COMPUTATION ---
     # Updated: Microscope icon
