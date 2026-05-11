@@ -35,8 +35,15 @@ step1, step2, step3 = st.tabs(["Step 1: Bulk Prep", "Step 2: Variation", "Step 3
 
 with step1:
     st.subheader("Structure & Template Setup")
-    struct_file = st.file_uploader("Upload Bulk Structure (.cif / .vasp)", type=["cif", "vasp"])
-    template_file = st.file_uploader("Upload Template .in", type=["in"])
+    st.write(""
+    "* Upload your bulk structure file (.cif / .vasp) downloaded from Materials Project \n"
+    "* Upload template input file (.in) for Quantum ESPRESSO with the desired calculation settings \n" 
+    "* Specify k-points grid for DFT calculations (e.g. 6x6x3) \n"
+    "* Click 'Generate Files' to create bulk structure input files ready for DFT calculations. \n")
+
+    col1, col2 = st.columns(2)
+    struct_file = col1.file_uploader("Upload Bulk Structure (.cif / .vasp)", type=["cif", "vasp"])
+    template_file = col2.file_uploader("Upload Template .in", type=["in"])
     
     st.markdown("K-Points Grid")
     k_col1, k_col2, k_col3 = st.columns(3)
@@ -63,6 +70,9 @@ with step1:
 with step2:
     st.subheader("Metal Variation Engine")
     st.write("Generate bulk structure variations by permuting atom types and create input files for each variation.")
+    st.write("* Upload the base structure input file (.in) obtained from Step 1. \n"
+    "* Specify the desired composition/ratio of the metals. \n"
+    "* Click 'Generate Variations' to create the modified structure input files. \n")
     
     base_in = st.file_uploader("Upload Base Structure (.in)", type=["in"], key="base_in_step2")
     with st.form("variation_form"):
@@ -134,7 +144,7 @@ with step2:
                 c1.download_button(
                     label="Download .in ZIP ↓", 
                     data=in_zip_data, 
-                    file_name="qe_inputs.zip", 
+                    file_name="bulk_inputs.zip", 
                     mime="application/zip",
                     use_container_width=True
                 )
@@ -151,6 +161,8 @@ with step2:
 
 with step3:
     st.subheader("Results Extraction")
+    st.write("* Upload zip file containing .out files from Quantum ESPRESSO calculations. \n"
+             "* Click 'Extract & Sort Energies' to display a table of energies sorted by the relative energy. \n")
     out_zip = st.file_uploader("Upload .out ZIP", type=["zip"])
     
     if out_zip and st.button("Extract & Sort Energies", type="primary", use_container_width=True):

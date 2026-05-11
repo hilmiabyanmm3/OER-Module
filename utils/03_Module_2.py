@@ -105,15 +105,30 @@ class SurfaceGenerator:
 class SurfaceAnalyzer:
     """Logic for Step 2: Surface Energy Calculation (Gamma)[cite: 4]."""
     def __init__(self, bulk_out_content: str):
-        self.e_bulk_ev, self.n_bulk = self._extract_basic_data(bulk_out_content)
+        self.e_bulk_ev, self.n_bulk = self._extract_basic_data(bulk_out_content, is_bulk=True)
 
-    def _extract_basic_data(self, content):
+    def _extract_basic_data(self, content, is_bulk=True):
         f = io.StringIO(content)
         atoms = read(f, format='espresso-out', index='-1')
-        match = re.search(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content)
-        if not match:
-            raise ValueError("Could not find energy in .out file")
-        energy_ev = float(match.group(1)) * 13.6056980659
+
+        if is_bulk:
+            matches = re.findall(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content)
+            if not matches:
+                raise ValueError("Could not find '! total energy' in bulk .out file")
+            energy_ry = float(matches[-1])
+
+        else:
+            matches = re.findall(r'(?i)Final energy\s+=\s+([-.\d]+)\s+Ry', content)
+            if matches:
+                energy_ry = float(matches[-1])
+            else:
+                # Fallback aman jika ternyata file slab yang di-upload adalah SCF (bukan relax)
+                fallback = re.findall(r'!\s+total energy\s+=\s+([-.\d]+)\s+Ry', content)
+                if not fallback:
+                    raise ValueError("Could not find energy in slab .out file")
+                energy_ry = float(fallback[-1])
+
+        energy_ev = energy_ry * 13.605698066
         return energy_ev, len(atoms)
 
     def _calculate_area(self, cell):
@@ -131,7 +146,7 @@ class SurfaceAnalyzer:
                 try:
                     f_buf = io.StringIO(content)
                     atoms = read(f_buf, format='espresso-out', index='-1')
-                    e_slab_ev, n_slab = self._extract_basic_data(content)
+                    e_slab_ev, n_slab = self._extract_basic_data(content, is_bulk=False)
                     area = self._calculate_area(atoms.get_cell())
                     numerator = e_slab_ev - (n_slab / self.n_bulk) * self.e_bulk_ev
                     gamma_ev_ang2 = numerator / (2 * area)

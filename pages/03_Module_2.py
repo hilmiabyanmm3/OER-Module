@@ -39,9 +39,14 @@ tab1, tab2 = st.tabs(["Step 1: Surface Builder", "Step 2: Surface Energy Analyze
 
 # --- STEP 1: SURFACE BUILDER ---
 with tab1:
-    st.subheader("Slab Generation (Bulk Output + Template)")
-    st.info("Upload bulk relaxation results and your template to cut the slab. "
-            "The tool will automatically handle coordinate injection and atom fixing.")
+    st.subheader("Slab Generation")
+    st.write("Generate slab structures from relaxed bulk structures. \n"
+             "* Upload bulk relaxation results (.out) \n" 
+             "* Upload template file (.in) containing the desired settings for QE calculations. \n"
+             "* Specify Miller index, number of layers, vacuum thickness, and supercell dimensions. \n"
+             "* Choose the portion of the top layer to remain free (not fixed) during relaxation. \n"
+             "* Click 'Generate Slab' to create the slab structure. \n"
+    )
     
     # 1. Coordinate and Template Uploaders
     c1, c2 = st.columns(2)
@@ -116,8 +121,11 @@ with tab1:
 
 # --- STEP 2: ANALYZER ---
 with tab2:
-    st.subheader("Thermodynamic Stability (Gamma)")
-    st.write("Calculate surface energy using relaxed bulk and slab outputs.")
+    st.subheader("Surface Energy")
+    st.write("Calculate surface energy using relaxed bulk and slab outputs. \n"
+             "* Upload the relaxed bulk output file (.out) \n"
+             "* Upload a zip file containing the input and output files for the relaxed slab. \n"
+             "* Click 'Calculate Surface Energy' to display the results in a table. \n")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -134,7 +142,7 @@ with tab2:
                     df = pd.DataFrame(results)
                     st.dataframe(df.style.format("{:.4f}", subset=["Gamma (J/m²)", "Gamma (eV/Å²)"]), use_container_width=True)
                     # Updated: Professional download style
-                    st.download_button("Download Excel Report ↓", analyzer.generate_excel(results), "gamma_results.xlsx", use_container_width=True)
+                    st.download_button("Download Excel Report ↓", analyzer.generate_excel(results), "surface_energies.xlsx", use_container_width=True)
                 else:
                     st.warning("No valid energy data found.")
             except Exception as e:
