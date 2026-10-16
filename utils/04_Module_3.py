@@ -11,7 +11,6 @@ from ase.constraints import FixAtoms
 from ase.io import read, write
 from ase.data import atomic_masses, atomic_numbers
 
-
 class AdsorbateGenerator:
     def __init__(self):
         self.base_atoms = None
@@ -19,18 +18,18 @@ class AdsorbateGenerator:
         self.base_template = ""
         self.base_cell_str = ""
         
-        # --- Group A (y > 0.5 * lattice_y) ---
+        # --- Group A (Default / Ni-Specific Shifts) ---
         self.offsets_A = {
             "H2O":  [("O", -0.60,  0.00, 1.80), ("H", -1.30,  0.60, 2.00), ("H", -1.30, -0.60, 2.00)],
             "OH1":  [("O", -0.60,  0.00, 1.80), ("H", -1.30,  0.60, 2.00)],
             "OH2":  [("O", -0.60,  0.00, 1.80), ("H", -1.30, -0.60, 2.00)],
             "O":    [("O", -0.80,  0.00, 1.60)],
             "OOH1": [("O", -1.03, -0.82, 1.25), ("O", -1.31, -0.09, 2.38), ("H", -2.15,  0.40, 2.08)],
-            "OOH2": [("O", -1.03,  0.82, 1.25), ("O", -1.31,  0.09, 2.38), ("H", -2.15, -0.40, 2.08)],
+            "OOH2": [("O", -1.03,  0.82, 1.25), ("O", -1.31, -0.09, 2.38), ("H", -2.15, -0.40, 2.08)],
             "H":    [("H",  0.00,  0.00, 1.00)]
         }
 
-        # --- Group B (y < 0.5 * lattice_y) ---
+        # --- Group B (Fe / Co-Specific Shifts) ---
         self.offsets_B = {
             "H2O":  [("O",  0.60,  0.00, 1.80), ("H",  1.30,  0.60, 2.00), ("H",  1.30, -0.60, 2.00)],
             "OH1":  [("O",  0.60,  0.00, 1.80), ("H",  1.30,  0.60, 2.00)],
@@ -51,12 +50,12 @@ class AdsorbateGenerator:
                 
                 if not out_files: return False
                 
-                # Baca file .out untuk geometri final
+                # Read final geometry from relaxed .out
                 out_content = z.read(out_files[0]).decode('utf-8', errors='ignore')
                 f = io.StringIO(out_content)
                 self.base_atoms = read(f, format='espresso-out', index='-1')
                 
-                # Baca file .in untuk dijadikan template
+                # Parse baseline cell and card parameters from input template
                 if in_files:
                     in_content = z.read(in_files[0]).decode('utf-8', errors='ignore')
                     lines = in_content.split('\n')
@@ -68,7 +67,6 @@ class AdsorbateGenerator:
                             cell_lines.append(line.strip())
                             continue
                         if in_cell:
-                            # Berhenti jika menabrak awal blok/cards baru
                             if re.match(r'(?i)^\s*(ATOMIC_SPECIES|K_POINTS|ATOMIC_POSITIONS)', line):
                                 break
                             if line.strip():
@@ -89,20 +87,21 @@ class AdsorbateGenerator:
                     self.base_template = re.sub(r"(?i)(pseudo_dir\s*=\s*)['\"].*?['\"]", r"\g<1>'~/PSEUDO'", self.base_template)
                 else:
                     self.base_template = "&CONTROL\n   pseudo_dir = '~/PSEUDO'\n/\n&SYSTEM\n/\n"
-                    self.base_cell_str = "\n" # Kosong jika tidak ada file in
+                    self.base_cell_str = "\n"
                 
-            # Tentukan indeks atom yang difiksasi (bawah 66%)
-            z_coords = self.base_atoms.positions[:, 2]
-            min_z, max_z = np.min(z_coords), np.max(z_coords)
-            cutoff = min_z + (max_z - min_z) * 0.66
-            self.slab_fixed_indices = [i for i, z in enumerate(z_coords) if z <= cutoff]
-            return True
-            
+                # Fix lower layers (bottom 66%)
+                z_coords = self.base_atoms.positions[:, 2]
+                min_z, max_z = np.min(z_coords), np.max(z_coords)
+                cutoff = min_z + (max_z - min_z) * 0.66
+                self.slab_fixed_indices = [i for i, z in enumerate(z_coords) if z <= cutoff]
+                return True
+                
         except Exception as e:
             print(f"Error loading ZIP: {e}")
             return False
 
     def find_top_sites(self, symbols, n_total):
+        """Finds the top total atoms sorted globally by Z-axis coordinate."""
         if not self.base_atoms:
             return []
 
@@ -112,8 +111,8 @@ class AdsorbateGenerator:
                 eligible_atoms.append({
                     'symbol': atom.symbol,
                     'z_coord': atom.position[2],
-                    'index_ase': atom.index,     
-                    'index_qe': atom.index + 1,  
+                    'index_ase': atom.index,     # 0-based index for script execution
+                    'index_qe': atom.index + 1,  # 1-based index for labels
                     'position': atom.position
                 })
 
@@ -121,6 +120,7 @@ class AdsorbateGenerator:
         return sorted_atoms[:n_total]
     
     def build_adsorbates_zip(self, selected_sites, reaction_package="OER", custom_variants=None):
+        """Generates coordinate files by matching elemental symbols to active offset groups."""
         output_buffer = io.BytesIO()
         
         pseudo_map = {
@@ -135,7 +135,6 @@ class AdsorbateGenerator:
             'S':  'S.pbe-n-rrkjus_psl.1.0.0.UPF'
         }
 
-        # Tentukan variant berdasarkan package yang dipilih
         if reaction_package == "OER":
             variants = {"1-h2o": ["H2O"], "2-oh": ["OH1", "OH2"], "3-o": ["O"], "4-ooh": ["OOH1", "OOH2"]}
         elif reaction_package == "HER":
@@ -145,15 +144,22 @@ class AdsorbateGenerator:
         else:
             variants = {"1-ads": ["O"]} 
 
-        lattice_y = self.base_atoms.cell.lengths()[1]
         metals_list = ['Ni', 'Fe', 'Mn', 'Co', 'Cu', 'Pd', 'Pt', 'Ag', 'Au', 'Ru', 'Rh', 'Ir', 'Os', 'V', 'Cr', 'Ti', 'Sc', 'Zn']
         
         with zipfile.ZipFile(output_buffer, 'w') as zf:
             for site in selected_sites:
-                ref_pos = self.base_atoms[site['index_ase']].position
-                site_name = f"{site['symbol']}-{site['index_qe']}"
+                current_idx = site['index_ase']
+                ref_pos = self.base_atoms[current_idx].position
+                metal_type = site['symbol']
+                site_name = f"{metal_type}-{site['index_qe']}"
                 
-                active_offsets = self.offsets_A if ref_pos[1] > 0.5 * lattice_y else self.offsets_B
+                # --- NEW RE-CONFIGURED ELEMENTAL RULES ---
+                if metal_type == "Ni":
+                    active_offsets = self.offsets_B
+                elif metal_type in ["Fe", "Co"]:
+                    active_offsets = self.offsets_A
+                else:
+                    active_offsets = self.offsets_A  # Fallback target configuration
                 
                 for folder, ads_list in variants.items():
                     for ads_type in ads_list:
@@ -164,31 +170,29 @@ class AdsorbateGenerator:
                                 new_pos = [ref_pos[0] + dx, ref_pos[1] + dy, ref_pos[2] + dz]
                                 new_atoms.append(Atom(elem, position=new_pos))
                         else:
-                            print(f"Warning: Offset for '{ads_type}' not found!")
                             continue 
                         
+                        # Apply Fixed Constraints
                         if self.slab_fixed_indices:
+                            from ase.constraints import FixAtoms
                             c = FixAtoms(indices=self.slab_fixed_indices)
                             new_atoms.set_constraint(c)
                         
-                        # --- 1. BERSIHKAN TEMPLATE ---
+                        # Render calculation blocks
                         unique_elements = list(set(new_atoms.get_chemical_symbols()))
                         ntyp_new = len(unique_elements)
                         
                         cards_pattern = re.compile(r'(?i)(ATOMIC_SPECIES|K_POINTS|CELL_PARAMETERS|ATOMIC_POSITIONS)')
                         template_clean = cards_pattern.split(self.base_template)[0].strip()
-                        
-                        # Hapus starting_magnetization lama
                         template_clean = re.sub(r'(?i)starting_magnetization\(\d+\)\s*=\s*[\d\.\-]+[\n\r]*', '', template_clean)
                         
-                        # Update nat dan ntyp
                         template_clean = re.sub(r'(?i)(nat\s*=\s*)\d+', r'\g<1>' + str(len(new_atoms)), template_clean)
                         template_clean = re.sub(r'(?i)(ntyp\s*=\s*)\d+', r'\g<1>' + str(ntyp_new), template_clean)
                         
-                        # --- 2. BANGUN ATOMIC_SPECIES & MAGNETIZATION ---
                         new_species_str = "\n\nATOMIC_SPECIES\n"
                         mag_str = ""
                         
+                        from ase.data import atomic_masses, atomic_numbers
                         for i, el in enumerate(unique_elements, 1):
                             mass = atomic_masses[atomic_numbers[el]]
                             pseudo = pseudo_map.get(el, f"{el}.UPF")
@@ -202,22 +206,17 @@ class AdsorbateGenerator:
                             new_system = system_match.group(1) + mag_str + system_match.group(2)
                             template_clean = template_clean.replace(system_match.group(0), new_system)
                         
-                        # Tambahkan dipole correction
                         if 'dipfield' not in template_clean.lower():
                             template_clean = re.sub(r'(?i)(&CONTROL)', r'\1\n   dipfield = .true.\n   tefield = .true.', template_clean, count=1)
                         if 'edir' not in template_clean.lower():
                             template_clean = re.sub(r'(?i)(&SYSTEM)', r'\1\n edir = 3\n   emaxpos = 0.75\n   eamp = 0.001', template_clean, count=1)
                         
-                        # --- 3. BANGUN BLOK KOORDINAT & GABUNGKAN ---
                         pos_str = "\nATOMIC_POSITIONS angstrom\n"
                         for i, atom in enumerate(new_atoms):
                             fix_flag = "0 0 0" if i in self.slab_fixed_indices else ""
                             pos_str += f"{atom.symbol}  {atom.position[0]:.10f} {atom.position[1]:.10f} {atom.position[2]:.10f}  {fix_flag}\n"
                         
-                        # Tambahkan K_POINTS (Gamma point by default untuk adsorbat)
                         kpoints_str = "\nK_POINTS gamma\n"
-                        
-                        # GABUNGKAN SEMUA DENGAN CELL DARI PW.IN ASLI
                         final_in = template_clean + new_species_str + kpoints_str + self.base_cell_str + pos_str
                         
                         v_buf = io.StringIO()
@@ -228,7 +227,7 @@ class AdsorbateGenerator:
         
         output_buffer.seek(0)
         return output_buffer.getvalue()
-    
+        
 class AdsorbateAnalyzer:
     """Logic for Step 2: Analyzing OER Adsorbate Results"""
     def __init__(self):

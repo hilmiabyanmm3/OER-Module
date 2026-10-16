@@ -116,7 +116,7 @@ def show_home():
 # 5. DEFINE NAVIGATION STRUCTURE
 home_page = st.Page(show_home, title="Home", default=True)
 pre_req   = st.Page("pages/01_Pre-requisite.py", title="Pre-requisite")
-intro     = st.Page("pages/00_Introduction.py", title ="Introduction")
+intro     = st.Page("pages/00_Introduction.py", title="Introduction")
 mod1      = st.Page("pages/02_Module_1.py", title="Module 1: Bulk")
 mod2      = st.Page("pages/03_Module_2.py", title="Module 2: Surface")
 mod3      = st.Page("pages/04_Module_3.py", title="Module 3: Adsorbate")
@@ -124,10 +124,12 @@ mod4      = st.Page("pages/05_Module_4.py", title="Module 4: Vibration")
 mod5      = st.Page("pages/06_Module_5.py", title="Module 5: Gibbs Free Energy")
 mod6      = st.Page("pages/07_Module_6.py", title="Module 6: Microkinetic")
 mod7      = st.Page("pages/08_Module_7.py", title="Module 7: Volcano Graphs")
+converter = st.Page("pages/09_File_Converter.py", title="Structure Converter")
 
 pg = st.navigation({
     "Portal": [home_page, intro, pre_req],
-    "OER Modeling Modules": [mod1, mod2, mod3, mod4, mod5, mod6, mod7]
+    "OER Modeling Modules": [mod1, mod2, mod3, mod4, mod5, mod6, mod7],
+    "Utilities & Tools": [converter]
 })
 
 # 6. RENDER SIDEBAR PROGRESS
