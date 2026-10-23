@@ -138,31 +138,77 @@ class ZPEManager:
 
     @staticmethod
     def adjust_control_namelist(content: str) -> str:
-        """Ensures calculation = 'scf', nstep = 1, and tprnfor = .true. in &CONTROL."""
-        # 1. calculation = 'scf'
-        if re.search(r'\bcalculation\s*=', content, re.IGNORECASE):
-            content = re.sub(
-                r'(\bcalculation\s*=\s*)(?:[\'"][^\'",\n\r]*[\'"]|[^\s,\n\r/]+)', 
-                r"\g<1>'scf'", 
-                content, 
-                flags=re.IGNORECASE
-            )
-        else:
-            content = re.sub(r'(&CONTROL\b[^\n]*\n)', r"\g<1>  calculation = 'scf',\n", content, flags=re.IGNORECASE)
+        """
+        Updates &CONTROL block so that:
+          calculation = 'scf'
+          tprnfor = .true.
+        appear at the top, nstep is updated in-place to 1,
+        and other parameters (restart_mode, outdir, pseudo_dir, etc.)
+        are preserved cleanly without slash corruption.
+        """
+        lines = content.splitlines()
+        start_idx = -1
+        end_idx = -1
 
-        # 2. nstep = 1
-        if re.search(r'\bnstep\s*=', content, re.IGNORECASE):
-            content = re.sub(r'(\bnstep\s*=\s*)\d+', r'\g<1>1', content, flags=re.IGNORECASE)
-        else:
-            content = re.sub(r'(&CONTROL\b[^\n]*\n)', r"\g<1>  nstep = 1,\n", content, flags=re.IGNORECASE)
+        # 1. Locate the exact boundary lines of the &CONTROL block
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if start_idx == -1:
+                if stripped.upper().startswith('&CONTROL'):
+                    start_idx = idx
+            else:
+                if stripped == '/' or stripped.startswith('/') or stripped.upper() == '&END' or stripped.upper().startswith('&END'):
+                    end_idx = idx
+                    break
 
-        # 3. tprnfor = .true.
-        if re.search(r'\btprnfor\s*=', content, re.IGNORECASE):
-            content = re.sub(r'(\btprnfor\s*=\s*)(?:\.true\.|\.false\.|\S+)', r'\g<1>.true.', content, flags=re.IGNORECASE)
-        else:
-            content = re.sub(r'(&CONTROL\b[^\n]*\n)', r"\g<1>  tprnfor = .true.,\n", content, flags=re.IGNORECASE)
+        if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
+            fallback_block = [
+                "&CONTROL",
+                " calculation = 'scf'",
+                "  tprnfor = .true.",
+                "  nstep = 1",
+                "/"
+            ]
+            return "\n".join(fallback_block) + "\n" + content
 
-        return content
+        # 2. Process lines strictly inside &CONTROL
+        body_lines = lines[start_idx + 1:end_idx]
+        new_body_lines = []
+        has_nstep = False
+
+        for raw_line in body_lines:
+            line = raw_line
+
+            # Skip existing calculation and tprnfor definitions
+            if re.search(r'(?i)\bcalculations?\s*=', line):
+                continue
+            if re.search(r'(?i)\btprnfor\s*=', line):
+                continue
+
+            # Update nstep in-place to 1
+            if re.search(r'(?i)\bnstep\s*=', line):
+                line = re.sub(r'(?i)(\bnstep\s*=\s*)\d+', r'\g<1>1', line)
+                has_nstep = True
+
+            if line.strip():
+                new_body_lines.append(line)
+
+        # 3. Assemble updated &CONTROL with calculation = 'scf' before tprnfor = .true.
+        updated_control = [
+            lines[start_idx],
+            " calculation = 'scf'",
+            "  tprnfor = .true."
+        ]
+        updated_control.extend(new_body_lines)
+
+        if not has_nstep:
+            updated_control.append("  nstep = 1")
+
+        updated_control.append(lines[end_idx])
+
+        # 4. Rebuild full content
+        full_lines = lines[:start_idx] + updated_control + lines[end_idx + 1:]
+        return "\n".join(full_lines)
 
     def process_batch_zip(self, input_zip_bytes: bytes, boundary_idx: int, existing_excel_bytes: bytes = None, log_text: str = "", overwrite_count: int = 0):
         """
@@ -173,7 +219,6 @@ class ZPEManager:
         output_buffer = io.BytesIO()
         df_excel = ExcelLogManager.load_or_create_excel(existing_excel_bytes)
         
-        # Audit log backup if overwriting populated records
         if not df_excel.empty:
             overwrite_count += 1
             log_text = ExcelLogManager.backup_to_log(df_excel, log_text, overwrite_count)
@@ -216,7 +261,7 @@ class ZPEManager:
                     write(xyz_io, atoms, format='xyz')
                     out_zip.writestr(f"{folder}/GEOM.xyz", xyz_io.getvalue())
 
-                    # Adjust 'nat' and &CONTROL parameters (calculation='scf', nstep=1, tprnfor=.true.)
+                    # Adjust 'nat' and &CONTROL namelist
                     template_adjusted = re.sub(r'(nat\s*=\s*)\d+', rf'\g<1>{total_atoms}', in_content, flags=re.IGNORECASE)
                     template_adjusted = self.adjust_control_namelist(template_adjusted)
 
@@ -230,7 +275,7 @@ class ZPEManager:
                             f"{vec[0]:12.8f} {vec[1]:12.8f} {vec[2]:12.8f}" for vec in atoms.cell
                         )
 
-                    # Get template up to ATOMIC_POSITIONS, removing duplicate trailing cards if present
+                    # Get template up to ATOMIC_POSITIONS, removing duplicate trailing cards
                     template_clean = re.split(r'ATOMIC_POSITIONS', template_adjusted, flags=re.IGNORECASE)[0].strip()
                     template_clean = re.sub(r'(?m)^\s*(?:K_POINTS|KPOINTS)\b[^\n]*(?:\n|$)(?:(?!^\s*(?:ATOMIC_SPECIES|ATOMIC_POSITIONS|K_POINTS|KPOINTS|CELL_PARAMETERS|\&[A-Za-z]+)\b).*(?:\n|$))*', '', template_clean, flags=re.IGNORECASE).strip()
                     template_clean = re.sub(r'(?m)^\s*CELL_PARAMETERS\b[^\n]*(?:\n|$)(?:(?!^\s*(?:ATOMIC_SPECIES|ATOMIC_POSITIONS|K_POINTS|KPOINTS|CELL_PARAMETERS|\&[A-Za-z]+)\b).*(?:\n|$))*', '', template_clean, flags=re.IGNORECASE).strip()
@@ -358,11 +403,9 @@ class ZPEAnalyzer:
         im = np.repeat(m**-0.5, 3)
         omega2, _ = np.linalg.eigh(im[:, None] * H * im)
         
-        # Unit conversion to eV
         s = _hbar * 1e10 / np.sqrt(_e * _amu)
         hnu = s * omega2.astype(complex)**0.5
         
-        # Mode frequencies in cm^-1 (1 eV = 8065.544 cm^-1)
         modes_cm = [f"{(freq * 8065.544):.1f}" for freq in hnu.real if freq > 0]
         modes_str = ", ".join(modes_cm)
         zpe_val = float(0.5 * hnu.real.sum())
