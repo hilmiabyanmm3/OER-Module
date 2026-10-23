@@ -125,11 +125,50 @@ class ZPEManager:
                 return v
         return f"Surface Intermediate ({clean_name})"
 
+    @staticmethod
+    def extract_card(content: str, card_names: list) -> str:
+        """Extracts a specific QE card and its data block from input content."""
+        names_pattern = "|".join(card_names)
+        known_cards = r'(?:ATOMIC_SPECIES|ATOMIC_POSITIONS|K_POINTS|KPOINTS|CELL_PARAMETERS|CONSTRAINTS|OCCUPATIONS|ATOMIC_VELOCITIES|ATOMIC_FORCES|HUBBARD|\&[A-Za-z]+)'
+        pattern = rf'(?m)^\s*({names_pattern})\b[^\n]*(?:\n|$)(?:(?!^\s*{known_cards}\b).*(?:\n|$))*'
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            return match.group(0).strip()
+        return ""
+
+    @staticmethod
+    def adjust_control_namelist(content: str) -> str:
+        """Ensures calculation = 'scf', nstep = 1, and tprnfor = .true. in &CONTROL."""
+        # 1. calculation = 'scf'
+        if re.search(r'\bcalculation\s*=', content, re.IGNORECASE):
+            content = re.sub(
+                r'(\bcalculation\s*=\s*)(?:[\'"][^\'",\n\r]*[\'"]|[^\s,\n\r/]+)', 
+                r"\g<1>'scf'", 
+                content, 
+                flags=re.IGNORECASE
+            )
+        else:
+            content = re.sub(r'(&CONTROL\b[^\n]*\n)', r"\g<1>  calculation = 'scf',\n", content, flags=re.IGNORECASE)
+
+        # 2. nstep = 1
+        if re.search(r'\bnstep\s*=', content, re.IGNORECASE):
+            content = re.sub(r'(\bnstep\s*=\s*)\d+', r'\g<1>1', content, flags=re.IGNORECASE)
+        else:
+            content = re.sub(r'(&CONTROL\b[^\n]*\n)', r"\g<1>  nstep = 1,\n", content, flags=re.IGNORECASE)
+
+        # 3. tprnfor = .true.
+        if re.search(r'\btprnfor\s*=', content, re.IGNORECASE):
+            content = re.sub(r'(\btprnfor\s*=\s*)(?:\.true\.|\.false\.|\S+)', r'\g<1>.true.', content, flags=re.IGNORECASE)
+        else:
+            content = re.sub(r'(&CONTROL\b[^\n]*\n)', r"\g<1>  tprnfor = .true.,\n", content, flags=re.IGNORECASE)
+
+        return content
+
     def process_batch_zip(self, input_zip_bytes: bytes, boundary_idx: int, existing_excel_bytes: bytes = None, log_text: str = "", overwrite_count: int = 0):
         """
-        Scans each folder in the input zip, looks for PW.in and PW.out,
+        Scans each folder in the input zip, reads PW.in and PW.out,
         displaces atoms with 1-based index > boundary_idx, creates GEOM.xyz,
-        and initializes/appends to Vibration_Analysis.xlsx with backup logging.
+        preserves KPOINTS and CELL_PARAMETERS, and writes updated PWINPUTs.
         """
         output_buffer = io.BytesIO()
         df_excel = ExcelLogManager.load_or_create_excel(existing_excel_bytes)
@@ -140,7 +179,6 @@ class ZPEManager:
             log_text = ExcelLogManager.backup_to_log(df_excel, log_text, overwrite_count)
 
         with zipfile.ZipFile(io.BytesIO(input_zip_bytes), 'r') as in_zip:
-            # Map files to directories
             folder_groups = {}
             for name in in_zip.namelist():
                 if name.endswith('/') or '__MACOSX' in name or '.DS_Store' in name:
@@ -150,7 +188,6 @@ class ZPEManager:
 
             with zipfile.ZipFile(output_buffer, 'w', zipfile.ZIP_DEFLATED) as out_zip:
                 for folder, file_list in folder_groups.items():
-                    # Identify PW.in and PW.out in this folder
                     pw_in_file = next((f for f in file_list if os.path.basename(f).lower() == 'pw.in' or f.lower().endswith('.in')), None)
                     pw_out_file = next((f for f in file_list if os.path.basename(f).lower() == 'pw.out' or f.lower().endswith('.out')), None)
 
@@ -160,14 +197,12 @@ class ZPEManager:
                     in_content = in_zip.read(pw_in_file).decode('utf-8', errors='ignore')
                     out_content = in_zip.read(pw_out_file).decode('utf-8', errors='ignore')
 
-                    # Parse relaxed structure
                     try:
                         atoms = read(io.StringIO(out_content), format='espresso-out', index='-1')
                     except Exception:
                         continue
 
                     total_atoms = len(atoms)
-                    # All atoms > boundary_idx (1-based) will be displaced
                     displace_indices = [i for i in range(total_atoms) if (i + 1) > boundary_idx]
                     if not displace_indices:
                         continue
@@ -181,9 +216,31 @@ class ZPEManager:
                     write(xyz_io, atoms, format='xyz')
                     out_zip.writestr(f"{folder}/GEOM.xyz", xyz_io.getvalue())
 
-                    # Prepare QE template header
+                    # Adjust 'nat' and &CONTROL parameters (calculation='scf', nstep=1, tprnfor=.true.)
                     template_adjusted = re.sub(r'(nat\s*=\s*)\d+', rf'\g<1>{total_atoms}', in_content, flags=re.IGNORECASE)
+                    template_adjusted = self.adjust_control_namelist(template_adjusted)
+
+                    # Extract KPOINTS and CELL_PARAMETERS from source .in
+                    kpoints_card = self.extract_card(in_content, ['K_POINTS', 'KPOINTS'])
+                    cell_card = self.extract_card(in_content, ['CELL_PARAMETERS'])
+
+                    # Fallback for cell if CELL_PARAMETERS was not explicit in .in
+                    if not cell_card and atoms.cell is not None and atoms.cell.volume > 1e-4:
+                        cell_card = "CELL_PARAMETERS {angstrom}\n" + "\n".join(
+                            f"{vec[0]:12.8f} {vec[1]:12.8f} {vec[2]:12.8f}" for vec in atoms.cell
+                        )
+
+                    # Get template up to ATOMIC_POSITIONS, removing duplicate trailing cards if present
                     template_clean = re.split(r'ATOMIC_POSITIONS', template_adjusted, flags=re.IGNORECASE)[0].strip()
+                    template_clean = re.sub(r'(?m)^\s*(?:K_POINTS|KPOINTS)\b[^\n]*(?:\n|$)(?:(?!^\s*(?:ATOMIC_SPECIES|ATOMIC_POSITIONS|K_POINTS|KPOINTS|CELL_PARAMETERS|\&[A-Za-z]+)\b).*(?:\n|$))*', '', template_clean, flags=re.IGNORECASE).strip()
+                    template_clean = re.sub(r'(?m)^\s*CELL_PARAMETERS\b[^\n]*(?:\n|$)(?:(?!^\s*(?:ATOMIC_SPECIES|ATOMIC_POSITIONS|K_POINTS|KPOINTS|CELL_PARAMETERS|\&[A-Za-z]+)\b).*(?:\n|$))*', '', template_clean, flags=re.IGNORECASE).strip()
+
+                    # Compose appended card blocks
+                    extra_cards = ""
+                    if kpoints_card:
+                        extra_cards += f"\n\n{kpoints_card}"
+                    if cell_card:
+                        extra_cards += f"\n\n{cell_card}"
 
                     directions = [
                         ('x', 0, 1, 'p'), ('x', 0, -1, 'm'),
@@ -202,15 +259,14 @@ class ZPEManager:
                             for atom in displaced_atoms:
                                 pos_block += f"{atom.symbol:4} {atom.position[0]:12.8f} {atom.position[1]:12.8f} {atom.position[2]:12.8f}\n"
 
-                            # Pattern: PWINPUT_atm157_xm
+                            full_pwinput = f"{template_clean}{pos_block}{extra_cards}\n"
                             filename = f"PWINPUT_atm{qe_idx}_{axis}{suffix}"
-                            out_zip.writestr(f"{folder}/{filename}", template_clean + pos_block)
+                            out_zip.writestr(f"{folder}/{filename}", full_pwinput)
 
                     # Extract final energy and update Excel
                     final_e = self.extract_final_energy(out_content)
                     rxn_name = self.identify_reaction(folder)
                     
-                    # Update row or append
                     if folder in df_excel['Path Name'].values:
                         r_idx = df_excel[df_excel['Path Name'] == folder].index[0]
                         df_excel.at[r_idx, 'Reaction Name'] = rxn_name
@@ -276,15 +332,16 @@ class ZPEAnalyzer:
 
         for a in idx_move:
             for axis in 'xyz':
-                # Accept both LOG_atm157_xm or atom1_x_minus.out
                 fm_candidates = [
                     f"{folder_path}/LOG_atm{a}_{axis}m",
                     f"{folder_path}/PWINPUT_atm{a}_{axis}m.out",
+                    f"{folder_path}/PWINPUT_atm{a}_{axis}m",
                     f"{folder_path}/atom{a}_{axis}_minus.out"
                 ]
                 fp_candidates = [
                     f"{folder_path}/LOG_atm{a}_{axis}p",
                     f"{folder_path}/PWINPUT_atm{a}_{axis}p.out",
+                    f"{folder_path}/PWINPUT_atm{a}_{axis}p",
                     f"{folder_path}/atom{a}_{axis}_plus.out"
                 ]
 
@@ -321,7 +378,6 @@ class ZPEAnalyzer:
             log_text = ExcelLogManager.backup_to_log(df_excel, log_text, overwrite_count)
 
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
-            # Find folders with output logs
             all_files = zf.namelist()
             log_folders = {
                 os.path.dirname(f) for f in all_files 
@@ -329,7 +385,6 @@ class ZPEAnalyzer:
             }
 
             for folder in log_folders:
-                # Find base PW.out in this folder or higher-order folder to get atomic masses
                 pw_out = next((f for f in all_files if f.startswith(folder) and f.endswith(('PW.out', '.out')) and 'LOG' not in f and 'PWINPUT' not in f), None)
                 if not pw_out:
                     continue
